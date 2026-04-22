@@ -30,6 +30,10 @@ The desktop app includes three compression controls:
 
 Defaults are `1600 px`, JPEG quality `78`, and PDF level `Screen`.
 
+## Language
+
+The app supports Korean and English. Korean is selected by default, and the language selector changes the visible app labels, table headers, status text, and compression setting labels.
+
 ## Supported Formats
 
 - `.xlsx`, `.xlsm`, `.pptx`, `.pptm`: direct ZIP-package image optimization.
