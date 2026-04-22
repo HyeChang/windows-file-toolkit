@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from file_compressor.models import CompressionResult, JobStatus
 
@@ -8,24 +9,35 @@ def _source_size(source: Path) -> int | None:
     return source.stat().st_size if source.exists() else None
 
 
-def default_hancom_available() -> bool:
+def is_progid_registered(
+    progid: str,
+    *,
+    open_key: Callable[[Any, str], Any] | None = None,
+) -> bool:
     try:
-        import win32com.client  # type: ignore
+        import winreg
 
-        win32com.client.Dispatch("HWPFrame.HwpObject")
-        return True
-    except Exception:
+        key_root = winreg.HKEY_CLASSES_ROOT
+        key_open = open_key or winreg.OpenKey
+    except ImportError:
+        key_root = None
+        if open_key is None:
+            return False
+        key_open = open_key
+
+    try:
+        with key_open(key_root, f"{progid}\\CLSID"):
+            return True
+    except OSError:
         return False
+
+
+def default_hancom_available() -> bool:
+    return is_progid_registered("HWPFrame.HwpObject")
 
 
 def default_office_available() -> bool:
-    try:
-        import win32com.client  # type: ignore
-
-        win32com.client.Dispatch("Excel.Application")
-        return True
-    except Exception:
-        return False
+    return is_progid_registered("Excel.Application")
 
 
 def compress_hwp(

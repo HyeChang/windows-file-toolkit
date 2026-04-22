@@ -25,7 +25,7 @@ The executable is written to `dist/FileCompressor.exe`.
 - `.xlsx`, `.xlsm`, `.pptx`, `.pptm`: direct ZIP-package image optimization.
 - `.hwpx`: direct ZIP-package image optimization.
 - `.pdf`: Ghostscript required.
-- `.hwp`: Hancom Office required.
-- `.xls`, `.ppt`: Microsoft Office required.
+- `.hwp`: recognized and reported as requiring Hancom Office; full automation compression is not implemented in this version.
+- `.xls`, `.ppt`: recognized and reported as requiring Microsoft Office; full automation compression is not implemented in this version.
 
 Original files are not overwritten. Compressed files are written next to the source file with `_compressed` in the file name.

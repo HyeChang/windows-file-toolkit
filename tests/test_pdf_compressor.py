@@ -36,3 +36,26 @@ def test_compress_pdf_skips_when_ghostscript_missing():
     assert result.status is JobStatus.SKIPPED
     assert result.output is None
     assert "Ghostscript" in result.message
+
+
+def test_compress_pdf_removes_partial_output_when_ghostscript_fails(monkeypatch):
+    workdir = case_dir("pdf-partial-failure")
+    source = workdir / "input.pdf"
+    source.write_bytes(b"%PDF-1.4")
+    output = workdir / "output.pdf"
+
+    class Completed:
+        returncode = 1
+        stderr = "failed"
+
+    def fake_run(command, check, capture_output, text):
+        partial_output = Path(command[-2].removeprefix("-sOutputFile="))
+        partial_output.write_bytes(b"partial")
+        return Completed()
+
+    monkeypatch.setattr("file_compressor.compressors.pdf.subprocess.run", fake_run)
+
+    result = compress_pdf(source, output, dependency=DependencyStatus(True, "gs"))
+
+    assert result.status is JobStatus.FAILED
+    assert not output.exists()

@@ -5,6 +5,19 @@ from file_compressor.dependencies import DependencyStatus, detect_ghostscript
 from file_compressor.models import CompressionResult, JobStatus
 
 
+def _temporary_output_path(output: Path) -> Path:
+    candidate = output.with_name(f"{output.name}.tmp")
+    if not candidate.exists():
+        return candidate
+
+    counter = 2
+    while True:
+        candidate = output.with_name(f"{output.name}.{counter}.tmp")
+        if not candidate.exists():
+            return candidate
+        counter += 1
+
+
 def build_ghostscript_command(executable: str, source: Path, output: Path) -> list[str]:
     return [
         executable,
@@ -35,9 +48,12 @@ def compress_pdf(
             message="Ghostscript is required for PDF compression.",
         )
 
-    command = build_ghostscript_command(dependency.executable, source, output)
+    temporary = _temporary_output_path(output)
+    command = build_ghostscript_command(dependency.executable, source, temporary)
     completed = subprocess.run(command, check=False, capture_output=True, text=True)
-    if completed.returncode != 0 or not output.exists():
+    if completed.returncode != 0 or not temporary.exists():
+        if temporary.exists():
+            temporary.unlink()
         return CompressionResult(
             status=JobStatus.FAILED,
             source=source,
@@ -45,6 +61,7 @@ def compress_pdf(
             message=completed.stderr.strip() or "Ghostscript failed.",
         )
 
+    temporary.replace(output)
     return CompressionResult(
         status=JobStatus.COMPLETED,
         source=source,
