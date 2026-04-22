@@ -2,7 +2,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from file_compressor.models import CompressionResult, JobStatus
+from file_compressor.models import CompressionOptions, CompressionResult, JobStatus
 
 
 def _source_size(source: Path) -> int | None:
@@ -44,6 +44,7 @@ def compress_hwp(
     source: Path,
     output: Path,
     *,
+    options: CompressionOptions | None = None,
     automation_available: Callable[[], bool] = default_hancom_available,
 ) -> CompressionResult:
     if not automation_available():
@@ -66,6 +67,7 @@ def compress_legacy_office(
     source: Path,
     output: Path,
     *,
+    options: CompressionOptions | None = None,
     automation_available: Callable[[], bool] = default_office_available,
 ) -> CompressionResult:
     if not automation_available():

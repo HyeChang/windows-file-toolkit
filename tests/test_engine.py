@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from file_compressor.engine import compress_file, compress_many
-from file_compressor.models import JobStatus
+from file_compressor.models import CompressionOptions, JobStatus
 
 
 def case_dir(name: str) -> Path:
@@ -30,3 +30,21 @@ def test_batch_continues_after_failed_file():
     results = list(compress_many([bad, unsupported]))
 
     assert [result.status for result in results] == [JobStatus.FAILED, JobStatus.SKIPPED]
+
+
+def test_batch_passes_options_to_each_file(monkeypatch):
+    workdir = case_dir("engine-options")
+    source = workdir / "notes.txt"
+    source.write_text("hello")
+    options = CompressionOptions(jpeg_quality=50)
+    calls = []
+
+    def fake_compress_file(path, selected_options):
+        calls.append((path, selected_options))
+        return None
+
+    monkeypatch.setattr("file_compressor.engine.compress_file", fake_compress_file)
+
+    list(compress_many([source], options=options))
+
+    assert calls == [(source, options)]

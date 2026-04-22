@@ -14,7 +14,7 @@ def optimize_image_bytes(
     content_type: str,
     data: bytes,
     *,
-    max_dimension: int = 1600,
+    max_dimension: int | None = 1600,
     jpeg_quality: int = 78,
 ) -> bytes:
     image_format = SUPPORTED_CONTENT_TYPES.get(content_type.lower())
@@ -24,7 +24,8 @@ def optimize_image_bytes(
     try:
         with Image.open(BytesIO(data)) as image:
             image = ImageOps.exif_transpose(image)
-            image.thumbnail((max_dimension, max_dimension))
+            if max_dimension is not None:
+                image.thumbnail((max_dimension, max_dimension))
 
             output = BytesIO()
             if image_format == "JPEG":
