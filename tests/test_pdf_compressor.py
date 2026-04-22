@@ -3,7 +3,7 @@ import shutil
 
 from file_compressor.compressors.pdf import build_ghostscript_command, compress_pdf
 from file_compressor.dependencies import DependencyStatus
-from file_compressor.models import JobStatus
+from file_compressor.models import CompressionOptions, JobStatus
 
 
 def case_dir(name: str) -> Path:
@@ -26,6 +26,16 @@ def test_build_ghostscript_command_uses_screen_setting():
     assert "-dPDFSETTINGS=/screen" in command
     assert f"-sOutputFile={output}" in command
     assert str(source) == command[-1]
+
+
+def test_build_ghostscript_command_uses_selected_pdf_preset():
+    workdir = case_dir("pdf-command-preset")
+    source = workdir / "input.pdf"
+    output = workdir / "output.pdf"
+
+    command = build_ghostscript_command("gs", source, output, pdf_preset="ebook")
+
+    assert "-dPDFSETTINGS=/ebook" in command
 
 
 def test_compress_pdf_skips_when_ghostscript_missing():
@@ -90,3 +100,30 @@ def test_compress_pdf_removes_temp_output_when_final_replace_fails(monkeypatch):
     assert result.status is JobStatus.FAILED
     assert not output.exists()
     assert not list(workdir.glob("*.tmp"))
+
+
+def test_compress_pdf_passes_selected_preset_to_ghostscript(monkeypatch):
+    workdir = case_dir("pdf-selected-preset")
+    source = workdir / "input.pdf"
+    source.write_bytes(b"%PDF-1.4")
+    output = workdir / "output.pdf"
+    commands = []
+
+    class Completed:
+        returncode = 1
+        stderr = "failed"
+
+    def fake_run(command, check, capture_output, text):
+        commands.append(command)
+        return Completed()
+
+    monkeypatch.setattr("file_compressor.compressors.pdf.subprocess.run", fake_run)
+
+    compress_pdf(
+        source,
+        output,
+        dependency=DependencyStatus(True, "gs"),
+        options=CompressionOptions(pdf_preset="prepress"),
+    )
+
+    assert "-dPDFSETTINGS=/prepress" in commands[0]

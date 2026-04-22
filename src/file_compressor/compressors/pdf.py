@@ -2,7 +2,15 @@ from pathlib import Path
 import subprocess
 
 from file_compressor.dependencies import DependencyStatus, detect_ghostscript
-from file_compressor.models import CompressionResult, JobStatus
+from file_compressor.models import CompressionOptions, CompressionResult, JobStatus
+
+
+PDF_PRESETS = {
+    "screen": "screen",
+    "ebook": "ebook",
+    "printer": "printer",
+    "prepress": "prepress",
+}
 
 
 def _temporary_output_path(output: Path) -> Path:
@@ -18,12 +26,19 @@ def _temporary_output_path(output: Path) -> Path:
         counter += 1
 
 
-def build_ghostscript_command(executable: str, source: Path, output: Path) -> list[str]:
+def build_ghostscript_command(
+    executable: str,
+    source: Path,
+    output: Path,
+    *,
+    pdf_preset: str = "screen",
+) -> list[str]:
+    preset = PDF_PRESETS.get(pdf_preset, "screen")
     return [
         executable,
         "-sDEVICE=pdfwrite",
         "-dCompatibilityLevel=1.4",
-        "-dPDFSETTINGS=/screen",
+        f"-dPDFSETTINGS=/{preset}",
         "-dNOPAUSE",
         "-dQUIET",
         "-dBATCH",
@@ -37,8 +52,10 @@ def compress_pdf(
     output: Path,
     *,
     dependency: DependencyStatus | None = None,
+    options: CompressionOptions | None = None,
 ) -> CompressionResult:
     dependency = dependency or detect_ghostscript()
+    options = options or CompressionOptions()
     original_size = source.stat().st_size
     if not dependency.available or dependency.executable is None:
         return CompressionResult(
@@ -49,7 +66,12 @@ def compress_pdf(
         )
 
     temporary = _temporary_output_path(output)
-    command = build_ghostscript_command(dependency.executable, source, temporary)
+    command = build_ghostscript_command(
+        dependency.executable,
+        source,
+        temporary,
+        pdf_preset=options.pdf_preset,
+    )
     completed = subprocess.run(command, check=False, capture_output=True, text=True)
     if completed.returncode != 0 or not temporary.exists():
         if temporary.exists():
