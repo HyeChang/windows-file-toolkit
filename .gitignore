@@ -2,6 +2,9 @@
 __pycache__/
 .pytest_cache/
 .test-output/
+pytest-cache-files-*/
+pytest-temp/
+python-write-check/
 .venv/
 build/
 dist/
