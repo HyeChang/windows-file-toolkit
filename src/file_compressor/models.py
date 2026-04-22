@@ -21,6 +21,13 @@ class JobStatus(Enum):
 
 
 @dataclass(frozen=True)
+class CompressionOptions:
+    max_image_dimension: int | None = 1600
+    jpeg_quality: int = 78
+    pdf_preset: str = "screen"
+
+
+@dataclass(frozen=True)
 class CompressionResult:
     status: JobStatus
     source: Path
