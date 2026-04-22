@@ -61,7 +61,18 @@ def compress_pdf(
             message=completed.stderr.strip() or "Ghostscript failed.",
         )
 
-    temporary.replace(output)
+    try:
+        temporary.replace(output)
+    except OSError as exc:
+        if temporary.exists():
+            temporary.unlink()
+        return CompressionResult(
+            status=JobStatus.FAILED,
+            source=source,
+            original_size=original_size,
+            message=str(exc),
+        )
+
     return CompressionResult(
         status=JobStatus.COMPLETED,
         source=source,
