@@ -20,6 +20,16 @@ powershell -ExecutionPolicy Bypass -File scripts/build_exe.ps1
 
 The executable is written to `dist/FileCompressor.exe`.
 
+## Advanced Compression Settings
+
+The desktop app includes three compression controls:
+
+- Image size: `800 px`, `1200 px`, `1600 px`, or `Original`.
+- JPEG quality: `50`, `65`, `78`, or `90`.
+- PDF level: `Screen`, `Ebook`, `Printer`, or `High quality`.
+
+Defaults are `1600 px`, JPEG quality `78`, and PDF level `Screen`.
+
 ## Supported Formats
 
 - `.xlsx`, `.xlsm`, `.pptx`, `.pptm`: direct ZIP-package image optimization.
