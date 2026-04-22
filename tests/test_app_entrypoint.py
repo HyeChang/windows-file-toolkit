@@ -1,10 +1,29 @@
-from file_compressor_app.main import main
+from file_compressor_app import main as app_main
 
 
-def test_main_reports_ui_not_implemented(capsys):
-    exit_code = main()
+class FakeApplication:
+    def __init__(self, argv):
+        self.argv = argv
+
+    def exec(self):
+        return 0
+
+
+class FakeWindow:
+    shown = False
+
+    def show(self):
+        FakeWindow.shown = True
+
+
+def test_main_starts_desktop_window(monkeypatch, capsys):
+    monkeypatch.setattr(app_main, "QApplication", FakeApplication)
+    monkeypatch.setattr(app_main, "MainWindow", FakeWindow)
+
+    exit_code = app_main.main()
 
     captured = capsys.readouterr()
     assert exit_code == 0
-    assert captured.out == "File Compressor desktop UI is not implemented yet.\n"
+    assert FakeWindow.shown is True
+    assert captured.out == ""
     assert captured.err == ""
