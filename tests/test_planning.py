@@ -34,6 +34,18 @@ def test_folder_batch_output_root_avoids_existing_sibling_folder():
     assert result == workdir / "문서_압축됨_2"
 
 
+def test_folder_batch_output_root_avoids_existing_sibling_files():
+    workdir = case_dir("planning-root-file-collision")
+    source_root = workdir / "문서"
+    source_root.mkdir()
+    (workdir / "문서_압축됨").write_text("occupied", encoding="utf-8")
+    (workdir / "문서_압축됨_2").write_text("occupied", encoding="utf-8")
+
+    result = folder_batch_output_root(source_root)
+
+    assert result == workdir / "문서_압축됨_3"
+
+
 def test_plan_folder_job_preserves_relative_path_under_batch_root():
     workdir = case_dir("planning-relative-path")
     source_root = workdir / "docs"
