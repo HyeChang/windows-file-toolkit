@@ -23,6 +23,17 @@ def test_folder_batch_output_root_uses_sibling_korean_suffix():
     assert result == workdir / "문서_압축됨"
 
 
+def test_folder_batch_output_root_avoids_existing_sibling_folder():
+    workdir = case_dir("planning-root-collision")
+    source_root = workdir / "문서"
+    source_root.mkdir()
+    (workdir / "문서_압축됨").mkdir()
+
+    result = folder_batch_output_root(source_root)
+
+    assert result == workdir / "문서_압축됨_2"
+
+
 def test_plan_folder_job_preserves_relative_path_under_batch_root():
     workdir = case_dir("planning-relative-path")
     source_root = workdir / "docs"

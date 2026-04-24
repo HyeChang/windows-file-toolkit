@@ -10,7 +10,16 @@ LEGACY_OUTPUT_SUFFIXES = {
 
 
 def folder_batch_output_root(source_root: Path) -> Path:
-    return source_root.with_name(f"{source_root.name}_압축됨")
+    base = source_root.with_name(f"{source_root.name}_압축됨")
+    if not base.exists():
+        return base
+
+    counter = 2
+    while True:
+        candidate = source_root.with_name(f"{source_root.name}_압축됨_{counter}")
+        if not candidate.exists():
+            return candidate
+        counter += 1
 
 
 def planned_batch_output_path(
