@@ -5,6 +5,11 @@ from file_compressor.models import FileKind
 
 OOXML_EXTENSIONS = {".xlsx", ".xlsm", ".pptx", ".pptm"}
 LEGACY_OFFICE_EXTENSIONS = {".xls", ".ppt"}
+SUPPORTED_EXTENSIONS = OOXML_EXTENSIONS | LEGACY_OFFICE_EXTENSIONS | {".hwpx", ".pdf", ".hwp"}
+
+
+def is_supported_file(path: Path) -> bool:
+    return path.suffix.lower() in SUPPORTED_EXTENSIONS
 
 
 def classify_file(path: Path) -> FileKind:

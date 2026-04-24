@@ -4,9 +4,14 @@ from pathlib import Path
 from file_compressor.compressors.package import compress_zip_document
 from file_compressor.compressors.pdf import compress_pdf
 from file_compressor.compressors.windows_automation import compress_hwp, compress_legacy_office
+from file_compressor.discovery import expand_source_paths
 from file_compressor.formats import classify_file
 from file_compressor.models import CompressionOptions, CompressionResult, FileKind, JobStatus
 from file_compressor.paths import compressed_output_path
+
+
+def expand_sources(paths: Iterable[Path]) -> list[Path]:
+    return expand_source_paths(paths)
 
 
 def compress_file(source: Path, options: CompressionOptions | None = None) -> CompressionResult:
