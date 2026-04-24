@@ -1,0 +1,34 @@
+from pathlib import Path
+
+from file_compressor.models import CompressionJob
+
+
+LEGACY_OUTPUT_SUFFIXES = {
+    ".xls": ".xlsx",
+    ".ppt": ".pptx",
+}
+
+
+def folder_batch_output_root(source_root: Path) -> Path:
+    return source_root.with_name(f"{source_root.name}_압축됨")
+
+
+def planned_batch_output_path(
+    source: Path,
+    source_root: Path,
+    *,
+    batch_root: Path | None = None,
+) -> Path:
+    batch_root = batch_root or folder_batch_output_root(source_root)
+    relative_path = source.relative_to(source_root)
+    suffix = LEGACY_OUTPUT_SUFFIXES.get(source.suffix.lower(), source.suffix)
+    return batch_root / relative_path.with_suffix(suffix)
+
+
+def plan_folder_job(source: Path, source_root: Path) -> CompressionJob:
+    batch_root = folder_batch_output_root(source_root)
+    return CompressionJob(
+        source=source,
+        output=planned_batch_output_path(source, source_root, batch_root=batch_root),
+        batch_root=batch_root,
+    )

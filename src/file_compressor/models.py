@@ -35,3 +35,10 @@ class CompressionResult:
     original_size: int | None = None
     compressed_size: int | None = None
     message: str = ""
+
+
+@dataclass(frozen=True)
+class CompressionJob:
+    source: Path
+    output: Path
+    batch_root: Path | None = None
