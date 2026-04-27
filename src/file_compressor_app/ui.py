@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QProgressBar,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -23,7 +24,7 @@ from file_compressor.discovery import discover_supported_files
 from file_compressor.engine import compress_file
 from file_compressor.models import CompressionJob, CompressionOptions
 from file_compressor.planning import folder_batch_output_root, planned_batch_output_path
-from file_compressor_app.view_model import FileJob, result_to_job
+from file_compressor_app.view_model import FileJob, result_to_job, summarize_jobs
 
 
 TRANSLATIONS = {
@@ -43,10 +44,15 @@ TRANSLATIONS = {
         "image_size": "이미지 크기",
         "jpeg_quality": "JPEG 품질",
         "pdf_level": "PDF 수준",
-        "headers": ["파일", "형식", "원본", "상태", "압축 후", "출력"],
+        "headers": ["파일", "형식", "원본", "상태", "압축 후", "절감", "절감률", "출력"],
         "initial_status": "파일을 추가하세요.",
         "ready_status": "{count}개 파일 준비됨.",
         "finished_status": "압축 완료.",
+        "cancel": "취소",
+        "cancelled_status": "압축 취소됨. {done}/{total}개 처리됨.",
+        "current_file_idle": "현재 파일: -",
+        "current_file": "현재 파일: {name}",
+        "summary": "요약: 완료 {completed}, 건너뜀 {skipped}, 실패 {failed}, 총 절감 {saved} ({rate})",
         "select_files": "파일 선택",
         "select_folder": "폴더 선택",
         "file_filter": "문서 (*.xlsx *.xlsm *.pptx *.pptm *.pdf *.hwpx *.hwp *.xls *.ppt);;모든 파일 (*.*)",
@@ -77,10 +83,15 @@ TRANSLATIONS = {
         "image_size": "Image size",
         "jpeg_quality": "JPEG quality",
         "pdf_level": "PDF level",
-        "headers": ["File", "Type", "Original", "Status", "Compressed", "Output"],
+        "headers": ["File", "Type", "Original", "Status", "Compressed", "Saved", "Rate", "Output"],
         "initial_status": "Add files to start.",
         "ready_status": "{count} file(s) ready.",
         "finished_status": "Compression finished.",
+        "cancel": "Cancel",
+        "cancelled_status": "Compression cancelled. {done}/{total} file(s) processed.",
+        "current_file_idle": "Current file: -",
+        "current_file": "Current file: {name}",
+        "summary": "Summary: completed {completed}, skipped {skipped}, failed {failed}, saved {saved} ({rate})",
         "select_files": "Select files",
         "select_folder": "Select folder",
         "file_filter": "Documents (*.xlsx *.xlsm *.pptx *.pptm *.pdf *.hwpx *.hwp *.xls *.ppt);;All files (*.*)",
@@ -100,10 +111,10 @@ TRANSLATIONS = {
 
 class DropTable(QTableWidget):
     def __init__(self, on_files):
-        super().__init__(0, 6)
+        super().__init__(0, 8)
         self.on_files = on_files
         self.setAcceptDrops(True)
-        self.setHorizontalHeaderLabels(["File", "Type", "Original", "Status", "Compressed", "Output"])
+        self.setHorizontalHeaderLabels(["File", "Type", "Original", "Status", "Compressed", "Saved", "Rate", "Output"])
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
 
@@ -131,12 +142,18 @@ class MainWindow(QMainWindow):
         self.resize(980, 560)
         self.jobs: list[FileJob] = []
         self.ghostscript_status = detect_ghostscript()
+        self._cancel_requested = False
+        self._current_file_name: str | None = None
 
         self.table = DropTable(self.add_paths)
         self.status_label = QLabel()
         self.add_button = QPushButton()
         self.add_folder_button = QPushButton()
         self.start_button = QPushButton()
+        self.cancel_button = QPushButton()
+        self.progress_bar = QProgressBar()
+        self.current_file_label = QLabel()
+        self.summary_label = QLabel()
         self.pdf_tool_status_label = QLabel()
         self.ghostscript_install_button = QPushButton()
         self.language_label = QLabel()
@@ -155,13 +172,18 @@ class MainWindow(QMainWindow):
         self.add_button.clicked.connect(self.pick_files)
         self.add_folder_button.clicked.connect(self.pick_folder)
         self.start_button.clicked.connect(self.compress_jobs)
+        self.cancel_button.clicked.connect(self.cancel_compression)
         self.ghostscript_install_button.clicked.connect(self.open_ghostscript_download)
         self.language_combo.currentIndexChanged.connect(self.change_language)
+        self.cancel_button.setEnabled(False)
+        self.progress_bar.setRange(0, 1)
+        self.progress_bar.setValue(0)
 
         actions = QHBoxLayout()
         actions.addWidget(self.add_button)
         actions.addWidget(self.add_folder_button)
         actions.addWidget(self.start_button)
+        actions.addWidget(self.cancel_button)
         actions.addStretch()
 
         self.settings_group = QGroupBox()
@@ -182,7 +204,12 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout()
         layout.addLayout(actions)
         layout.addWidget(self.settings_group)
+        progress_layout = QHBoxLayout()
+        progress_layout.addWidget(self.progress_bar)
+        progress_layout.addWidget(self.current_file_label)
+        layout.addLayout(progress_layout)
         layout.addWidget(self.table)
+        layout.addWidget(self.summary_label)
         layout.addWidget(self.status_label)
 
         root = QWidget()
@@ -250,6 +277,7 @@ class MainWindow(QMainWindow):
         self.add_button.setText(str(self.tr("add_files")))
         self.add_folder_button.setText(str(self.tr("add_folder")))
         self.start_button.setText(str(self.tr("start_compression")))
+        self.cancel_button.setText(str(self.tr("cancel")))
         self.tools_menu.setTitle(str(self.tr("tools")))
         self.ghostscript_install_action.setText(str(self.tr("install_ghostscript")))
         self.settings_group.setTitle(str(self.tr("settings")))
@@ -263,6 +291,8 @@ class MainWindow(QMainWindow):
         self._set_jpeg_quality_items(selected_quality)
         self._set_pdf_preset_items(selected_pdf_preset)
         self._refresh_pdf_tool_status()
+        self._refresh_current_file_label()
+        self._refresh_summary()
         self._refresh_status_label()
         self.refresh_table()
 
@@ -279,6 +309,25 @@ class MainWindow(QMainWindow):
 
     def open_ghostscript_download(self):
         QDesktopServices.openUrl(QUrl(GHOSTSCRIPT_DOWNLOAD_URL))
+
+    def _refresh_current_file_label(self):
+        if self._current_file_name:
+            text = str(self.tr("current_file")).format(name=self._current_file_name)
+        else:
+            text = str(self.tr("current_file_idle"))
+        self.current_file_label.setText(text)
+
+    def _refresh_summary(self):
+        summary = summarize_jobs(self.jobs)
+        self.summary_label.setText(
+            str(self.tr("summary")).format(
+                completed=summary.completed,
+                skipped=summary.skipped,
+                failed=summary.failed,
+                saved=summary.savings_size_text,
+                rate=summary.savings_rate_text,
+            )
+        )
 
     def _set_status(self, key: str, **context: int):
         self._status_key = key
@@ -321,6 +370,7 @@ class MainWindow(QMainWindow):
             if path.is_file():
                 self._append_job(path)
         self.refresh_table()
+        self._refresh_summary()
         self._set_status("ready_status", count=len(self.jobs))
 
     def add_folder(self, folder: Path):
@@ -329,6 +379,7 @@ class MainWindow(QMainWindow):
 
         self._append_folder_jobs(folder)
         self.refresh_table()
+        self._refresh_summary()
         self._set_status("ready_status", count=len(self.jobs))
 
     def add_paths(self, paths: list[Path]):
@@ -338,6 +389,7 @@ class MainWindow(QMainWindow):
             elif path.is_file():
                 self._append_job(path)
         self.refresh_table()
+        self._refresh_summary()
         self._set_status("ready_status", count=len(self.jobs))
 
     def _append_folder_jobs(self, folder: Path):
@@ -360,8 +412,23 @@ class MainWindow(QMainWindow):
         )
 
     def compress_jobs(self):
+        total = len(self.jobs)
+        if total == 0:
+            return
+
         options = self.current_options()
+        self._cancel_requested = False
+        self.cancel_button.setEnabled(True)
+        self.start_button.setEnabled(False)
+        self.progress_bar.setRange(0, total)
+        self.progress_bar.setValue(0)
+        processed = 0
         for index, job in enumerate(list(self.jobs)):
+            if self._cancel_requested:
+                break
+
+            self._current_file_name = job.name
+            self._refresh_current_file_label()
             self.jobs[index].status = "processing"
             self.refresh_table()
             QApplication.processEvents()
@@ -369,9 +436,27 @@ class MainWindow(QMainWindow):
             target = job.compression_job or job.path
             result = compress_file(target, options)
             self.jobs[index] = result_to_job(result, compression_job=job.compression_job)
+            processed += 1
+            self.progress_bar.setValue(processed)
+            self._refresh_summary()
             self.refresh_table()
             QApplication.processEvents()
-        self._set_status("finished_status")
+
+            if self._cancel_requested:
+                break
+
+        self.cancel_button.setEnabled(False)
+        self.start_button.setEnabled(True)
+        self._current_file_name = None
+        self._refresh_current_file_label()
+        if self._cancel_requested:
+            self._set_status("cancelled_status", done=processed, total=total)
+        else:
+            self._set_status("finished_status")
+
+    def cancel_compression(self):
+        self._cancel_requested = True
+        self.cancel_button.setEnabled(False)
 
     def refresh_table(self):
         self.table.setRowCount(len(self.jobs))
@@ -382,6 +467,8 @@ class MainWindow(QMainWindow):
                 job.original_size_text,
                 self.status_text(job.status),
                 job.compressed_size_text,
+                job.savings_size_text,
+                job.savings_rate_text,
                 job.output_text,
             ]
             for column, value in enumerate(values):

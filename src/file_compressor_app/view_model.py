@@ -41,8 +41,82 @@ class FileJob:
         return format_size(self.compressed_size)
 
     @property
+    def savings_size(self) -> int | None:
+        if self.original_size is None or self.compressed_size is None:
+            return None
+        return self.original_size - self.compressed_size
+
+    @property
+    def savings_rate(self) -> float | None:
+        if self.original_size in (None, 0) or self.compressed_size is None:
+            return None
+        return (self.savings_size or 0) / self.original_size * 100
+
+    @property
+    def savings_size_text(self) -> str:
+        return format_size(self.savings_size)
+
+    @property
+    def savings_rate_text(self) -> str:
+        if self.savings_rate is None:
+            return "-"
+        return f"{self.savings_rate:.1f}%"
+
+    @property
     def output_text(self) -> str:
         return str(self.output_path) if self.output_path else "-"
+
+
+@dataclass(frozen=True)
+class CompressionSummary:
+    total: int
+    completed: int
+    skipped: int
+    failed: int
+    original_size: int | None
+    compressed_size: int | None
+
+    @property
+    def savings_size(self) -> int | None:
+        if self.original_size is None or self.compressed_size is None:
+            return None
+        return self.original_size - self.compressed_size
+
+    @property
+    def savings_rate(self) -> float | None:
+        if self.original_size in (None, 0) or self.compressed_size is None:
+            return None
+        return (self.savings_size or 0) / self.original_size * 100
+
+    @property
+    def savings_size_text(self) -> str:
+        return format_size(self.savings_size)
+
+    @property
+    def savings_rate_text(self) -> str:
+        if self.savings_rate is None:
+            return "-"
+        return f"{self.savings_rate:.1f}%"
+
+
+def summarize_jobs(jobs: list[FileJob]) -> CompressionSummary:
+    completed_jobs = [
+        job
+        for job in jobs
+        if job.status == JobStatus.COMPLETED.value
+        and job.original_size is not None
+        and job.compressed_size is not None
+    ]
+    original_size = sum(job.original_size or 0 for job in completed_jobs) if completed_jobs else None
+    compressed_size = sum(job.compressed_size or 0 for job in completed_jobs) if completed_jobs else None
+    return CompressionSummary(
+        total=len(jobs),
+        completed=sum(1 for job in jobs if job.status == JobStatus.COMPLETED.value),
+        skipped=sum(1 for job in jobs if job.status == JobStatus.SKIPPED.value),
+        failed=sum(1 for job in jobs if job.status == JobStatus.FAILED.value),
+        original_size=original_size,
+        compressed_size=compressed_size,
+    )
 
 
 def result_to_job(

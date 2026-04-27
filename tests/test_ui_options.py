@@ -97,7 +97,11 @@ def test_window_defaults_to_korean_language(monkeypatch):
     assert window.pdf_tool_status_label.text() == "PDF 압축 도구: 설치 필요"
     assert window.ghostscript_install_button.text() == "설치"
     assert window.ghostscript_install_button.isEnabled() is True
-    assert table_headers(window) == ["파일", "형식", "원본", "상태", "압축 후", "출력"]
+    assert window.cancel_button.text() == "취소"
+    assert window.cancel_button.isEnabled() is False
+    assert window.current_file_label.text() == "현재 파일: -"
+    assert window.summary_label.text() == "요약: 완료 0, 건너뜀 0, 실패 0, 총 절감 - (-)"
+    assert table_headers(window) == ["파일", "형식", "원본", "상태", "압축 후", "절감", "절감률", "출력"]
     assert item_text_for_data(window.image_dimension_combo, None) == "원본"
     assert item_text_for_data(window.pdf_preset_combo, "screen") == "화면용"
     assert window.status_label.text() == "파일을 추가하세요."
@@ -127,7 +131,10 @@ def test_window_switches_visible_text_to_english(monkeypatch):
     assert window.ghostscript_install_action.text() == "Install Ghostscript"
     assert window.pdf_tool_status_label.text() == "PDF compression tool: install required"
     assert window.ghostscript_install_button.text() == "Install"
-    assert table_headers(window) == ["File", "Type", "Original", "Status", "Compressed", "Output"]
+    assert window.cancel_button.text() == "Cancel"
+    assert window.current_file_label.text() == "Current file: -"
+    assert window.summary_label.text() == "Summary: completed 0, skipped 0, failed 0, saved - (-)"
+    assert table_headers(window) == ["File", "Type", "Original", "Status", "Compressed", "Saved", "Rate", "Output"]
     assert item_text_for_data(window.image_dimension_combo, None) == "Original"
     assert item_text_for_data(window.pdf_preset_combo, "screen") == "Screen"
     assert window.status_label.text() == "Add files to start."
@@ -211,7 +218,7 @@ def test_add_folder_adds_supported_files_with_planned_outputs(monkeypatch):
     assert all(isinstance(job.compression_job, CompressionJob) for job in window.jobs)
     assert window.jobs[0].output_path == source_root.parent / "source_압축됨" / "nested" / "slides.pptx"
     assert window.jobs[1].output_path == source_root.parent / "source_압축됨" / "report.xlsx"
-    assert window.table.item(0, 5).text() == str(window.jobs[0].output_path)
+    assert window.table.item(0, 7).text() == str(window.jobs[0].output_path)
     assert window.status_label.text() == "2개 파일 준비됨."
 
 
@@ -240,3 +247,72 @@ def test_compress_jobs_uses_folder_compression_jobs(monkeypatch):
     assert isinstance(calls[0][0], CompressionJob)
     assert calls[0][0].source == source
     assert calls[0][0].output == source_root.parent / "source_압축됨" / "report.xlsx"
+
+
+def test_compress_jobs_updates_progress_and_summary(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    app()
+    window = MainWindow()
+    first = Path(".worktrees/file-compressor-impl/.test-output/ui-summary/first.pdf")
+    second = Path(".worktrees/file-compressor-impl/.test-output/ui-summary/second.pdf")
+    first.parent.mkdir(parents=True, exist_ok=True)
+    first.write_bytes(b"a" * 2000)
+    second.write_bytes(b"b" * 2000)
+    window.add_files([first, second])
+
+    def fake_compress_file(path, options):
+        from file_compressor.models import CompressionResult, JobStatus
+
+        return CompressionResult(
+            status=JobStatus.COMPLETED,
+            source=path,
+            output=path.with_name(f"{path.stem}_compressed{path.suffix}"),
+            original_size=2000,
+            compressed_size=1000,
+        )
+
+    monkeypatch.setattr("file_compressor_app.ui.compress_file", fake_compress_file)
+
+    window.compress_jobs()
+
+    assert window.progress_bar.maximum() == 2
+    assert window.progress_bar.value() == 2
+    assert window.current_file_label.text() == "현재 파일: -"
+    assert window.table.item(0, 5).text() == "1000 B"
+    assert window.table.item(0, 6).text() == "50.0%"
+    assert window.summary_label.text() == "요약: 완료 2, 건너뜀 0, 실패 0, 총 절감 2.0 KB (50.0%)"
+
+
+def test_cancel_button_stops_before_next_file(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    app()
+    window = MainWindow()
+    files = []
+    for index in range(3):
+        source = Path(f".worktrees/file-compressor-impl/.test-output/ui-cancel/file-{index}.pdf")
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_bytes(b"pdf")
+        files.append(source)
+    window.add_files(files)
+    calls = []
+
+    def fake_compress_file(path, options):
+        calls.append(path)
+        window.cancel_compression()
+        from file_compressor.models import CompressionResult, JobStatus
+
+        return CompressionResult(
+            status=JobStatus.COMPLETED,
+            source=path,
+            original_size=100,
+            compressed_size=50,
+        )
+
+    monkeypatch.setattr("file_compressor_app.ui.compress_file", fake_compress_file)
+
+    window.compress_jobs()
+
+    assert calls == [files[0]]
+    assert window.progress_bar.value() == 1
+    assert window.jobs[1].status == "pending"
+    assert window.status_label.text() == "압축 취소됨. 1/3개 처리됨."

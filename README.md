@@ -29,6 +29,12 @@ Use `폴더 추가` / `Add folder` to add every supported document under a folde
 - Subfolders are preserved under the new output parent.
 - Legacy `.xls` and `.ppt` files are converted to `.xlsx` and `.pptx` in the output batch.
 
+## Progress and Results
+
+The app shows overall progress, the current file being processed, and a cancel button while compression is running. Cancel stops before the next file starts; the file already being processed is allowed to finish safely.
+
+The result table includes original size, compressed size, saved size, and saved rate for each file. A summary below the table shows completed/skipped/failed counts and total saved size/rate.
+
 ## Advanced Compression Settings
 
 The desktop app includes three compression controls:
