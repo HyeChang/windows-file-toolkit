@@ -1,6 +1,7 @@
 from pathlib import Path
 import shutil
 
+from PySide6.QtCore import Qt, QItemSelectionModel
 from PySide6.QtWidgets import QApplication
 from pypdf import PdfReader, PdfWriter
 
@@ -33,6 +34,18 @@ def write_pdf(path: Path, page_count: int):
 
 def page_widths(path: Path) -> list[int]:
     return [int(page.mediabox.width) for page in PdfReader(str(path)).pages]
+
+
+def select_rows(table, rows: list[int]):
+    table.clearSelection()
+    selection_model = table.selectionModel()
+    for row in rows:
+        selection_model.select(
+            table.model().index(row, 0),
+            QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+        )
+    if rows:
+        table.setCurrentCell(rows[-1], 0)
 
 
 def make_window(monkeypatch, *, tesseract_available=False) -> MainWindow:
@@ -85,13 +98,27 @@ def test_pdf_tools_tab_extracts_selected_pages(monkeypatch):
     window.pdf_tools_tab.operation_combo.setCurrentIndex(
         window.pdf_tools_tab.operation_combo.findData("extract")
     )
-    window.pdf_tools_tab.page_selection_edit.setText("2")
     window.pdf_tools_tab.preview_operation()
+    select_rows(window.pdf_tools_tab.page_plan_table, [1])
     window.pdf_tools_tab.apply_operation()
 
     assert output.exists()
     assert len(PdfReader(str(output)).pages) == 1
+    assert page_widths(output) == [201]
     assert window.pdf_tools_tab.table.item(0, 3).text() == "완료"
+    assert window.pdf_tools_tab.page_selection_edit.isHidden()
+
+
+def test_pdf_merge_preview_uses_compact_vertical_layout(monkeypatch):
+    window = make_window(monkeypatch)
+
+    window.pdf_tools_tab.operation_combo.setCurrentIndex(
+        window.pdf_tools_tab.operation_combo.findData("merge")
+    )
+
+    assert window.pdf_tools_tab.options_group.maximumHeight() <= 120
+    assert window.pdf_tools_tab.merge_splitter.orientation() == Qt.Orientation.Vertical
+    assert window.pdf_tools_tab.merge_splitter.widget(1) is window.pdf_tools_tab.merge_result_group
 
 
 def test_pdf_merge_preview_uses_two_input_panels_and_result_order(monkeypatch):
@@ -143,14 +170,15 @@ def test_pdf_delete_preview_shows_page_actions(monkeypatch):
     window.pdf_tools_tab.operation_combo.setCurrentIndex(
         window.pdf_tools_tab.operation_combo.findData("delete")
     )
-    window.pdf_tools_tab.page_selection_edit.setText("2")
     window.pdf_tools_tab.preview_operation()
+    select_rows(window.pdf_tools_tab.page_plan_table, [1])
 
     assert window.pdf_tools_tab.page_plan_table.rowCount() == 3
     assert [
         window.pdf_tools_tab.page_plan_table.item(row, 3).text()
         for row in range(3)
     ] == ["유지", "삭제", "유지"]
+    assert window.pdf_tools_tab.page_selection_edit.isHidden()
 
 
 def test_pdf_split_preview_shows_output_for_each_page(monkeypatch):
@@ -186,15 +214,18 @@ def test_pdf_reorder_preview_shows_result_order_and_applies_it(monkeypatch):
     window.pdf_tools_tab.operation_combo.setCurrentIndex(
         window.pdf_tools_tab.operation_combo.findData("reorder")
     )
-    window.pdf_tools_tab.page_selection_edit.setText("3,1")
     window.pdf_tools_tab.preview_operation()
+    window.pdf_tools_tab.page_plan_table.selectRow(2)
+    window.pdf_tools_tab.move_page_plan_up()
+    window.pdf_tools_tab.move_page_plan_up()
     window.pdf_tools_tab.apply_operation()
 
     assert [
         window.pdf_tools_tab.page_plan_table.item(row, 2).text()
-        for row in range(2)
-    ] == ["3", "1"]
-    assert page_widths(output) == [202, 200]
+        for row in range(3)
+    ] == ["3", "1", "2"]
+    assert page_widths(output) == [202, 200, 201]
+    assert window.pdf_tools_tab.page_selection_edit.isHidden()
 
 
 def test_pdf_rotate_preview_shows_selected_rotation(monkeypatch):
@@ -209,17 +240,18 @@ def test_pdf_rotate_preview_shows_selected_rotation(monkeypatch):
     window.pdf_tools_tab.operation_combo.setCurrentIndex(
         window.pdf_tools_tab.operation_combo.findData("rotate")
     )
-    window.pdf_tools_tab.page_selection_edit.setText("2")
     window.pdf_tools_tab.rotation_combo.setCurrentIndex(
         window.pdf_tools_tab.rotation_combo.findData(90)
     )
     window.pdf_tools_tab.preview_operation()
+    select_rows(window.pdf_tools_tab.page_plan_table, [1])
 
     assert [
         window.pdf_tools_tab.page_plan_table.item(row, 3).text()
         for row in range(2)
     ] == ["유지", "회전"]
     assert window.pdf_tools_tab.page_plan_table.item(1, 4).text() == "90"
+    assert window.pdf_tools_tab.page_selection_edit.isHidden()
 
 
 def test_search_tab_finds_text_file_content(monkeypatch):

@@ -86,14 +86,14 @@ Creation-date changes use the Windows file time API. On non-Windows systems, cre
 
 Use the `PDF 도구` / `PDF Tools` tab to manage PDF pages without installing another PDF program.
 
-- Merge up to two PDFs into one file. Merge mode shows separate `PDF 1`, `PDF 2`, and merge result panels.
+- Merge up to two PDFs into one file. Merge mode shows `PDF 1` and `PDF 2` page lists above a full-width merge result list.
 - Split a PDF into one file per page.
 - Extract selected pages.
 - Delete selected pages.
 - Rotate selected pages.
 - Reorder pages using an explicit page order.
 
-For split, extract, delete, rotate, and reorder, the page preview table shows each source page, the planned action, rotation, and output path before applying the change.
+For extract, delete, and rotate, select page rows directly in the page preview table. For reorder, select a row and use the up/down buttons to build the result order. Split shows one output file per page.
 
 PDF outputs are written to the selected output file or folder. Existing files are not overwritten; a numeric suffix is added when needed.
 

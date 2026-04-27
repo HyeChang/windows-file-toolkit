@@ -3,17 +3,20 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
-from PySide6.QtCore import QUrl
+from PySide6.QtCore import QItemSelectionModel, Qt, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QCheckBox,
     QComboBox,
     QFileDialog,
     QGroupBox,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QPushButton,
+    QSizePolicy,
     QSplitter,
     QTableWidgetItem,
     QVBoxLayout,
@@ -27,11 +30,7 @@ from file_compressor.pdf_tools import (
     PdfOperationResult,
     build_single_pdf_plan,
     default_merge_plan,
-    delete_pages,
-    extract_pages,
     pdf_page_refs,
-    reorder_pages,
-    rotate_pages,
     split_pdf,
     write_page_plan,
 )
@@ -73,6 +72,8 @@ TRANSLATIONS = {
         "input_page_headers": ["파일", "페이지"],
         "merge_result_headers": ["순서", "파일", "페이지", "회전", "상태"],
         "page_plan_headers": ["순서", "파일", "원본 페이지", "작업", "회전", "출력"],
+        "select_all_pages": "전체 선택",
+        "clear_page_selection": "선택 해제",
         "page_actions": {
             "include": "포함",
             "exclude": "제외",
@@ -132,6 +133,8 @@ TRANSLATIONS = {
         "input_page_headers": ["File", "Page"],
         "merge_result_headers": ["Order", "File", "Page", "Rotation", "Status"],
         "page_plan_headers": ["Order", "File", "Source page", "Action", "Rotation", "Output"],
+        "select_all_pages": "Select all",
+        "clear_page_selection": "Clear",
         "page_actions": {
             "include": "Include",
             "exclude": "Exclude",
@@ -168,6 +171,9 @@ class PdfToolsWidget(QWidget):
         self.output_path: Path | None = None
         self.last_result: PdfOperationResult | None = None
         self.merge_plan: list[PdfPagePlan] = []
+        self.page_plan: list[PdfPagePlan] = []
+        self.selected_page_numbers: list[int] = [1]
+        self._refreshing_page_plan = False
 
         self.add_files_button = QPushButton()
         self.add_folder_button = QPushButton()
@@ -186,6 +192,10 @@ class PdfToolsWidget(QWidget):
         self.table = FileToolTable(4, self.add_paths)
         self.page_plan_group = QGroupBox()
         self.page_plan_table = FileToolTable(6)
+        self.page_select_all_button = QPushButton()
+        self.page_clear_selection_button = QPushButton()
+        self.page_move_up_button = QPushButton()
+        self.page_move_down_button = QPushButton()
         self.pdf1_group = QGroupBox()
         self.pdf2_group = QGroupBox()
         self.merge_result_group = QGroupBox()
@@ -195,6 +205,11 @@ class PdfToolsWidget(QWidget):
         self.move_up_button = QPushButton()
         self.move_down_button = QPushButton()
         self.remove_result_button = QPushButton()
+
+        self.options_group.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        self.options_group.setMaximumHeight(96)
+        self.page_plan_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.merge_result_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
 
         self.page_selection_edit.setText("1")
         self._set_operation_items("extract")
@@ -212,6 +227,11 @@ class PdfToolsWidget(QWidget):
         self.move_up_button.clicked.connect(self.move_merge_result_up)
         self.move_down_button.clicked.connect(self.move_merge_result_down)
         self.remove_result_button.clicked.connect(self.remove_selected_merge_result)
+        self.page_plan_table.itemSelectionChanged.connect(self.on_page_plan_selection_changed)
+        self.page_select_all_button.clicked.connect(self.select_all_page_rows)
+        self.page_clear_selection_button.clicked.connect(self.clear_page_row_selection)
+        self.page_move_up_button.clicked.connect(self.move_page_plan_up)
+        self.page_move_down_button.clicked.connect(self.move_page_plan_down)
 
         actions = QHBoxLayout()
         actions.addWidget(self.add_files_button)
@@ -258,6 +278,10 @@ class PdfToolsWidget(QWidget):
         self.apply_button.setText(str(self.tr("apply")))
         self.options_group.setTitle(str(self.tr("pdf_options")))
         self.page_plan_group.setTitle(str(self.tr("page_plan")))
+        self.page_select_all_button.setText(str(self.tr("select_all_pages")))
+        self.page_clear_selection_button.setText(str(self.tr("clear_page_selection")))
+        self.page_move_up_button.setText(str(self.tr("move_up")))
+        self.page_move_down_button.setText(str(self.tr("move_down")))
         self.pdf1_group.setTitle(str(self.tr("pdf_1")))
         self.pdf2_group.setTitle(str(self.tr("pdf_2")))
         self.merge_result_group.setTitle(str(self.tr("merge_result")))
@@ -273,17 +297,26 @@ class PdfToolsWidget(QWidget):
         self.pdf2_table.setHorizontalHeaderLabels(self.tr("input_page_headers"))
         self.merge_result_table.setHorizontalHeaderLabels(self.tr("merge_result_headers"))
         self._set_operation_items(selected_operation)
+        self._configure_table_columns()
         self._refresh_output_label()
         self._refresh_mode_visibility()
         self.refresh_table("ready")
 
     def _setup_page_plan_panel(self):
         layout = QVBoxLayout()
+        actions = QHBoxLayout()
+        actions.addWidget(self.page_select_all_button)
+        actions.addWidget(self.page_clear_selection_button)
+        actions.addWidget(self.page_move_up_button)
+        actions.addWidget(self.page_move_down_button)
+        actions.addStretch()
+        layout.addLayout(actions)
         layout.addWidget(self.page_plan_table)
         self.page_plan_group.setLayout(layout)
 
     def _setup_merge_panels(self):
-        self.merge_splitter = QSplitter()
+        self.merge_splitter = QSplitter(Qt.Orientation.Vertical)
+        self.merge_input_splitter = QSplitter(Qt.Orientation.Horizontal)
         for group, table in (
             (self.pdf1_group, self.pdf1_table),
             (self.pdf2_group, self.pdf2_table),
@@ -291,7 +324,7 @@ class PdfToolsWidget(QWidget):
             group_layout = QVBoxLayout()
             group_layout.addWidget(table)
             group.setLayout(group_layout)
-            self.merge_splitter.addWidget(group)
+            self.merge_input_splitter.addWidget(group)
 
         result_layout = QVBoxLayout()
         result_actions = QHBoxLayout()
@@ -302,7 +335,9 @@ class PdfToolsWidget(QWidget):
         result_layout.addLayout(result_actions)
         result_layout.addWidget(self.merge_result_table)
         self.merge_result_group.setLayout(result_layout)
+        self.merge_splitter.addWidget(self.merge_input_splitter)
         self.merge_splitter.addWidget(self.merge_result_group)
+        self.merge_splitter.setSizes([240, 260])
 
     def _set_operation_items(self, selected: str):
         self.operation_combo.blockSignals(True)
@@ -337,6 +372,7 @@ class PdfToolsWidget(QWidget):
         self.refresh_table("ready")
 
     def add_paths(self, paths: list[Path]):
+        had_paths = bool(self.paths)
         known = set(self.paths)
         for path in _expand_pdf_files(paths):
             if path not in known:
@@ -345,12 +381,15 @@ class PdfToolsWidget(QWidget):
         if self.operation_combo.currentData() == "merge":
             self.paths = self.paths[:2]
             self.merge_plan = default_merge_plan(self.paths)
+        elif not had_paths and self.paths:
+            self._reset_single_pdf_state()
         self.refresh_table("ready")
 
     def clear_paths(self):
         self.paths.clear()
         self.last_result = None
         self.merge_plan = []
+        self._reset_single_pdf_state()
         self.refresh_table("ready")
 
     def preview_operation(self):
@@ -372,18 +411,17 @@ class PdfToolsWidget(QWidget):
             elif operation == "split":
                 result = split_pdf(self.paths[0], output)
             elif operation == "extract":
-                result = extract_pages(self.paths[0], output, self.page_selection_edit.text())
+                self._refresh_page_plan_table()
+                result = write_page_plan(self.page_plan, output)
             elif operation == "delete":
-                result = delete_pages(self.paths[0], output, self.page_selection_edit.text())
+                self._refresh_page_plan_table()
+                result = write_page_plan(self.page_plan, output)
             elif operation == "rotate":
-                result = rotate_pages(
-                    self.paths[0],
-                    output,
-                    self.page_selection_edit.text(),
-                    self.rotation_combo.currentData(),
-                )
+                self._refresh_page_plan_table()
+                result = write_page_plan(self.page_plan, output)
             elif operation == "reorder":
-                result = reorder_pages(self.paths[0], output, self.page_selection_edit.text())
+                self._ensure_reorder_plan()
+                result = write_page_plan(self.page_plan, output)
             else:
                 result = PdfOperationResult(status="failed", message="Unknown operation.")
         except Exception as exc:
@@ -392,11 +430,69 @@ class PdfToolsWidget(QWidget):
         self.refresh_table(result.status)
 
     def on_operation_changed(self):
-        if self.operation_combo.currentData() == "merge":
+        operation = self.operation_combo.currentData()
+        if operation == "merge":
             self.paths = self.paths[:2]
             self.merge_plan = default_merge_plan(self.paths)
+        elif operation == "reorder":
+            self.page_plan = []
+        else:
+            self._reset_single_pdf_state()
         self._refresh_mode_visibility()
         self.refresh_table("ready")
+
+    def on_page_plan_selection_changed(self):
+        if self._refreshing_page_plan:
+            return
+        operation = self.operation_combo.currentData()
+        if operation not in {"extract", "delete", "rotate"}:
+            return
+
+        selected_rows = sorted({index.row() for index in self.page_plan_table.selectionModel().selectedRows()})
+        selected_pages: list[int] = []
+        for row in selected_rows:
+            item = self.page_plan_table.item(row, 2)
+            if item is not None:
+                selected_pages.append(int(item.text()))
+        self.selected_page_numbers = selected_pages
+        self.page_selection_edit.setText(self._selected_pages_text())
+        self._refresh_page_plan_table()
+
+    def select_all_page_rows(self):
+        if self.operation_combo.currentData() not in {"extract", "delete", "rotate"}:
+            return
+        self.selected_page_numbers = [page.page_number for page in pdf_page_refs(self.paths[0])] if self.paths else []
+        self.page_selection_edit.setText(self._selected_pages_text())
+        self._refresh_page_plan_table()
+
+    def clear_page_row_selection(self):
+        if self.operation_combo.currentData() not in {"extract", "delete", "rotate"}:
+            return
+        self.selected_page_numbers = []
+        self.page_selection_edit.setText("")
+        self._refresh_page_plan_table()
+
+    def move_page_plan_up(self):
+        row = self._selected_page_plan_row()
+        if row is None or row == 0:
+            return
+        self._ensure_reorder_plan()
+        self.page_plan[row - 1], self.page_plan[row] = self.page_plan[row], self.page_plan[row - 1]
+        self._renumber_page_plan()
+        self._refresh_page_plan_table()
+        self.page_plan_table.selectRow(row - 1)
+
+    def move_page_plan_down(self):
+        row = self._selected_page_plan_row()
+        if row is None:
+            return
+        self._ensure_reorder_plan()
+        if row >= len(self.page_plan) - 1:
+            return
+        self.page_plan[row + 1], self.page_plan[row] = self.page_plan[row], self.page_plan[row + 1]
+        self._renumber_page_plan()
+        self._refresh_page_plan_table()
+        self.page_plan_table.selectRow(row + 1)
 
     def move_merge_result_up(self):
         row = self._selected_merge_result_row()
@@ -470,37 +566,53 @@ class PdfToolsWidget(QWidget):
     def _refresh_mode_visibility(self):
         operation = self.operation_combo.currentData()
         is_merge = operation == "merge"
-        uses_page_selection = operation in {"extract", "delete", "rotate", "reorder"}
+        uses_page_row_selection = operation in {"extract", "delete", "rotate"}
+        uses_page_reorder = operation == "reorder"
         self.table.setVisible(not is_merge)
         self.page_plan_group.setVisible(not is_merge)
         self.merge_splitter.setVisible(is_merge)
-        self.page_selection_label.setVisible(uses_page_selection)
-        self.page_selection_edit.setVisible(uses_page_selection)
+        self.page_selection_label.setVisible(False)
+        self.page_selection_edit.setVisible(False)
         self.rotation_label.setVisible(operation == "rotate")
         self.rotation_combo.setVisible(operation == "rotate")
+        self.page_select_all_button.setVisible(uses_page_row_selection)
+        self.page_clear_selection_button.setVisible(uses_page_row_selection)
+        self.page_move_up_button.setVisible(uses_page_reorder)
+        self.page_move_down_button.setVisible(uses_page_reorder)
 
     def _refresh_page_plan_table(self):
         if not self.paths:
             self.page_plan_table.setRowCount(0)
+            self.page_plan = []
             return
 
         operation = self.operation_combo.currentData()
         if operation == "merge":
             self.page_plan_table.setRowCount(0)
+            self.page_plan = []
             return
 
         try:
-            plan = build_single_pdf_plan(
-                self.paths[0],
-                operation,
-                self.page_selection_edit.text(),
-                self._planned_output(operation),
-                rotation=self.rotation_combo.currentData() or 0,
-            )
+            if operation == "reorder":
+                self._ensure_reorder_plan()
+                plan = self.page_plan
+            else:
+                self._clamp_selected_pages()
+                plan = build_single_pdf_plan(
+                    self.paths[0],
+                    operation,
+                    self._selected_pages_text(),
+                    self._planned_output(operation),
+                    rotation=self.rotation_combo.currentData() or 0,
+                )
         except Exception:
             self.page_plan_table.setRowCount(0)
+            self.page_plan = []
             return
 
+        self.page_plan = plan
+        self._refreshing_page_plan = True
+        self.page_plan_table.blockSignals(True)
         self.page_plan_table.setRowCount(len(plan))
         for row, page in enumerate(plan):
             values = [
@@ -513,7 +625,21 @@ class PdfToolsWidget(QWidget):
             ]
             for column, value in enumerate(values):
                 self.page_plan_table.setItem(row, column, QTableWidgetItem(value))
-        self.page_plan_table.resizeColumnsToContents()
+
+        self.page_plan_table.clearSelection()
+        if operation in {"extract", "delete", "rotate"}:
+            selection_model = self.page_plan_table.selectionModel()
+            selected = set(self.selected_page_numbers)
+            for row, page in enumerate(plan):
+                if page.page_number in selected:
+                    selection_model.select(
+                        self.page_plan_table.model().index(row, 0),
+                        QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+                    )
+
+        self.page_plan_table.blockSignals(False)
+        self._refreshing_page_plan = False
+        self._configure_table_columns()
 
     def _refresh_merge_tables(self, status: str):
         self._refresh_input_page_table(self.pdf1_table, self.paths[0] if len(self.paths) > 0 else None)
@@ -531,9 +657,7 @@ class PdfToolsWidget(QWidget):
             for column, value in enumerate(values):
                 self.merge_result_table.setItem(row, column, QTableWidgetItem(value))
 
-        self.pdf1_table.resizeColumnsToContents()
-        self.pdf2_table.resizeColumnsToContents()
-        self.merge_result_table.resizeColumnsToContents()
+        self._configure_table_columns()
 
     def _refresh_input_page_table(self, table: FileToolTable, source: Path | None):
         if source is None:
@@ -562,6 +686,75 @@ class PdfToolsWidget(QWidget):
             replace(page, result_order=index)
             for index, page in enumerate(self.merge_plan, start=1)
         ]
+
+    def _reset_single_pdf_state(self):
+        self.page_plan = []
+        self.selected_page_numbers = [1]
+        self.page_selection_edit.setText("1")
+
+    def _selected_pages_text(self) -> str:
+        return ",".join(str(page_number) for page_number in self.selected_page_numbers)
+
+    def _clamp_selected_pages(self):
+        if not self.paths:
+            self.selected_page_numbers = []
+            self.page_selection_edit.setText("")
+            return
+        total_pages = len(pdf_page_refs(self.paths[0]))
+        self.selected_page_numbers = [
+            page_number
+            for page_number in self.selected_page_numbers
+            if 1 <= page_number <= total_pages
+        ]
+        self.page_selection_edit.setText(self._selected_pages_text())
+
+    def _ensure_reorder_plan(self):
+        if not self.paths:
+            self.page_plan = []
+            return
+        source = self.paths[0]
+        output = self._planned_output("reorder")
+        if not self.page_plan or any(page.source != source for page in self.page_plan):
+            self.page_plan = [
+                replace(page, action="include", output=output)
+                for page in pdf_page_refs(source)
+            ]
+        else:
+            self.page_plan = [
+                replace(page, output=output, result_order=index)
+                for index, page in enumerate(self.page_plan, start=1)
+            ]
+
+    def _selected_page_plan_row(self) -> int | None:
+        row = self.page_plan_table.currentRow()
+        if row < 0:
+            return None
+        if self.operation_combo.currentData() != "reorder":
+            return None
+        if row >= len(self.page_plan):
+            return None
+        return row
+
+    def _renumber_page_plan(self):
+        self.page_plan = [
+            replace(page, result_order=index)
+            for index, page in enumerate(self.page_plan, start=1)
+        ]
+
+    def _configure_table_columns(self):
+        self._set_resize_modes(self.pdf1_table, stretch={0})
+        self._set_resize_modes(self.pdf2_table, stretch={0})
+        self._set_resize_modes(self.merge_result_table, stretch={1})
+        self._set_resize_modes(self.page_plan_table, stretch={1, 5})
+
+    def _set_resize_modes(self, table: FileToolTable, *, stretch: set[int]):
+        table.setWordWrap(False)
+        table.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        header = table.horizontalHeader()
+        header.setStretchLastSection(False)
+        for column in range(table.columnCount()):
+            mode = QHeaderView.ResizeMode.Stretch if column in stretch else QHeaderView.ResizeMode.ResizeToContents
+            header.setSectionResizeMode(column, mode)
 
     def action_text(self, action: str) -> str:
         actions = TRANSLATIONS[self.language]["page_actions"]
