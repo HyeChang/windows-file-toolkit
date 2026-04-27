@@ -60,3 +60,13 @@ def test_expand_sources_returns_deterministic_supported_paths():
         first,
         standalone,
     ]
+
+
+def test_expand_sources_deduplicates_files_selected_directly_and_through_folder():
+    workdir = case_dir("discovery-dedupe")
+    source_root = workdir / "batch"
+    source_root.mkdir(parents=True, exist_ok=True)
+    source = source_root / "budget.xlsx"
+    source.write_text("xlsx")
+
+    assert expand_sources([source, source_root]) == [source]

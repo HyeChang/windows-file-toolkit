@@ -22,7 +22,7 @@ def expand_source_paths(paths: Iterable[Path]) -> list[Path]:
             discovered.extend(discover_supported_files(path))
         elif path.is_file() and is_supported_file(path):
             discovered.append(path)
-    return sorted(discovered, key=_path_sort_key)
+    return sorted(dict.fromkeys(discovered), key=_path_sort_key)
 
 
 def _path_sort_key(path: Path) -> tuple[str, ...]:
