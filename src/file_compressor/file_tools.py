@@ -4,6 +4,7 @@ from dataclasses import dataclass, replace
 from datetime import date
 import os
 import re
+import shutil
 from pathlib import Path
 
 
@@ -33,6 +34,15 @@ class RenamePlan:
     status: str
     message: str = ""
     preserve_modified_time: bool = True
+
+
+@dataclass(frozen=True)
+class ClassificationPlan:
+    source: Path
+    target: Path
+    category: str
+    status: str
+    message: str = ""
 
 
 def clean_file_stem(stem: str, *, clean_spaces: bool = True, clean_special: bool = True) -> str:
@@ -113,6 +123,94 @@ def apply_rename_plan(plans: list[RenamePlan]) -> list[RenamePlan]:
             results.append(replace(plan, status="failed", message=str(exc)))
         else:
             results.append(replace(plan, status="completed", message="Renamed."))
+    return results
+
+
+def classify_file_category(path: Path) -> str:
+    suffix = Path(path).suffix.lower()
+    if suffix == ".pdf":
+        return "PDF"
+    if suffix in {".xlsx", ".xlsm", ".xls", ".csv"}:
+        return "Excel"
+    if suffix in {".pptx", ".pptm", ".ppt"}:
+        return "PowerPoint"
+    if suffix in {".hwp", ".hwpx"}:
+        return "HWP"
+    if suffix in {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tif", ".tiff", ".webp", ".heic"}:
+        return "Images"
+    if suffix in {".doc", ".docx", ".txt", ".rtf", ".odt", ".md"}:
+        return "Documents"
+    if suffix in {".zip", ".7z", ".rar", ".tar", ".gz"}:
+        return "Archives"
+    return "Other"
+
+
+def build_classification_plan(paths: list[Path], output_root: Path) -> list[ClassificationPlan]:
+    output_root = Path(output_root)
+    occupied: set[Path] = set()
+    plans: list[ClassificationPlan] = []
+    for source in paths:
+        source = Path(source)
+        category = classify_file_category(source)
+        target = output_root / category / source.name
+
+        if not source.exists():
+            plans.append(
+                ClassificationPlan(
+                    source=source,
+                    target=target,
+                    category=category,
+                    status="skipped",
+                    message="Source file does not exist.",
+                )
+            )
+            continue
+        if source.is_dir():
+            plans.append(
+                ClassificationPlan(
+                    source=source,
+                    target=target,
+                    category=category,
+                    status="skipped",
+                    message="Folders cannot be moved as files.",
+                )
+            )
+            continue
+
+        if target == source:
+            status = "unchanged"
+        else:
+            target = _unique_path(target, occupied)
+            status = "ready"
+
+        occupied.add(target)
+        plans.append(ClassificationPlan(source=source, target=target, category=category, status=status))
+    return plans
+
+
+def apply_classification_plan(plans: list[ClassificationPlan]) -> list[ClassificationPlan]:
+    results: list[ClassificationPlan] = []
+    for plan in plans:
+        if plan.status == "unchanged":
+            results.append(replace(plan, status="unchanged", message="No change."))
+            continue
+        if plan.status != "ready":
+            results.append(plan)
+            continue
+        if not plan.source.exists():
+            results.append(replace(plan, status="failed", message="Source file does not exist."))
+            continue
+        if plan.target.exists():
+            results.append(replace(plan, status="failed", message="Target file already exists."))
+            continue
+
+        try:
+            plan.target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(plan.source), str(plan.target))
+        except OSError as exc:
+            results.append(replace(plan, status="failed", message=str(exc)))
+        else:
+            results.append(replace(plan, status="completed", message="Moved."))
     return results
 
 

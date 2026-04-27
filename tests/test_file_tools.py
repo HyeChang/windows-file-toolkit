@@ -4,9 +4,12 @@ from pathlib import Path
 import shutil
 
 from file_compressor.file_tools import (
+    apply_classification_plan,
     RenameOptions,
     apply_rename_plan,
     build_rename_plan,
+    build_classification_plan,
+    classify_file_category,
     clean_file_stem,
     extract_date_from_name,
 )
@@ -83,3 +86,48 @@ def test_apply_rename_plan_preserves_modified_time_by_default():
     assert not source.exists()
     assert plan.target.exists()
     assert abs(plan.target.stat().st_mtime - original_mtime) < 1
+
+
+def test_classify_file_category_maps_common_extensions():
+    assert classify_file_category(Path("report.pdf")) == "PDF"
+    assert classify_file_category(Path("budget.xlsx")) == "Excel"
+    assert classify_file_category(Path("legacy.xls")) == "Excel"
+    assert classify_file_category(Path("deck.pptx")) == "PowerPoint"
+    assert classify_file_category(Path("draft.hwp")) == "HWP"
+    assert classify_file_category(Path("image.png")) == "Images"
+    assert classify_file_category(Path("memo.docx")) == "Documents"
+    assert classify_file_category(Path("bundle.zip")) == "Archives"
+    assert classify_file_category(Path("unknown.bin")) == "Other"
+
+
+def test_classification_plan_groups_files_under_output_folder_and_avoids_collisions():
+    workdir = case_dir("classification-plan")
+    source_a = workdir / "a" / "report.pdf"
+    source_b = workdir / "b" / "report.pdf"
+    output_root = workdir / "sorted"
+    source_a.parent.mkdir()
+    source_b.parent.mkdir()
+    (output_root / "PDF").mkdir(parents=True)
+    source_a.write_bytes(b"a")
+    source_b.write_bytes(b"b")
+    (output_root / "PDF" / "report.pdf").write_bytes(b"exists")
+
+    plans = build_classification_plan([source_a, source_b], output_root)
+
+    assert plans[0].category == "PDF"
+    assert plans[0].target == output_root / "PDF" / "report_2.pdf"
+    assert plans[1].target == output_root / "PDF" / "report_3.pdf"
+
+
+def test_apply_classification_plan_moves_files_to_category_folder():
+    workdir = case_dir("classification-apply")
+    source = workdir / "보고서.pdf"
+    output_root = workdir / "sorted"
+    source.write_bytes(b"pdf")
+
+    [plan] = build_classification_plan([source], output_root)
+    results = apply_classification_plan([plan])
+
+    assert results[0].status == "completed"
+    assert not source.exists()
+    assert (output_root / "PDF" / "보고서.pdf").read_bytes() == b"pdf"
