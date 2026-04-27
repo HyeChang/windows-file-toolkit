@@ -4,6 +4,7 @@ from typing import Callable
 
 
 GHOSTSCRIPT_DOWNLOAD_URL = "https://ghostscript.com/releases/gsdnld.html"
+TESSERACT_DOWNLOAD_URL = "https://github.com/UB-Mannheim/tesseract/wiki"
 
 
 @dataclass(frozen=True)
@@ -14,4 +15,9 @@ class DependencyStatus:
 
 def detect_ghostscript(which: Callable[[str], str | None] = default_which) -> DependencyStatus:
     executable = which("gswin64c") or which("gswin32c") or which("gs")
+    return DependencyStatus(available=executable is not None, executable=executable)
+
+
+def detect_tesseract(which: Callable[[str], str | None] = default_which) -> DependencyStatus:
+    executable = which("tesseract")
     return DependencyStatus(available=executable is not None, executable=executable)
