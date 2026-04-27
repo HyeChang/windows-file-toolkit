@@ -10,6 +10,8 @@ The main window is split into tabs:
 - `파일 이름 변경` / `Rename`: rename many files with preview-first rules.
 - `파일 자동 분류` / `Classify`: move files into category folders.
 - `파일 날짜 변경` / `Dates`: change file creation and modified dates.
+- `PDF 도구` / `PDF Tools`: merge, split, extract, delete, rotate, and reorder PDF pages.
+- `파일 내용 검색` / `Search`: search inside text, PDF, DOCX, XLSX, and OCR-capable files.
 
 ## Run from Source
 
@@ -79,6 +81,32 @@ Use the `파일 날짜 변경` / `Dates` tab to change file timestamps after pre
 - `되돌리기` / `Undo` restores the previous creation and modified dates for the last applied batch.
 
 Creation-date changes use the Windows file time API. On non-Windows systems, creation-date changes are reported as unsupported instead of being silently ignored.
+
+## PDF Tools
+
+Use the `PDF 도구` / `PDF Tools` tab to manage PDF pages without installing another PDF program.
+
+- Merge multiple PDFs into one file.
+- Split a PDF into one file per page.
+- Extract selected pages.
+- Delete selected pages.
+- Rotate selected pages.
+- Reorder pages using an explicit page order.
+
+PDF outputs are written to the selected output file or folder. Existing files are not overwritten; a numeric suffix is added when needed.
+
+## Content Search and OCR
+
+Use the `파일 내용 검색` / `Search` tab to search inside files, not only file names.
+
+- Supported without OCR: `.txt`, `.csv`, `.md`, text-based `.pdf`, `.docx`, `.xlsx`, `.xlsm`.
+- Search results show file name, type, location, snippet, and status.
+- OCR is optional and uses Tesseract when installed.
+- If OCR is missing, the tab shows `OCR: 설치 필요` / `OCR: install required` and provides an install button.
+
+The OCR install button opens the UB Mannheim Tesseract page: https://github.com/UB-Mannheim/tesseract/wiki
+
+OCR search works best for image files. Scanned PDF OCR depends on the installed Tesseract build and the PDF/image formats it can read.
 
 ## Progress and Results
 
