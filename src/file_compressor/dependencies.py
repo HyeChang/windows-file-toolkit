@@ -3,7 +3,7 @@ from shutil import which as default_which
 from typing import Callable
 
 
-GHOSTSCRIPT_DOWNLOAD_URL = "https://artifex.com/downloads"
+GHOSTSCRIPT_DOWNLOAD_URL = "https://ghostscript.com/releases/gsdnld.html"
 
 
 @dataclass(frozen=True)

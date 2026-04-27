@@ -186,8 +186,8 @@ def test_ghostscript_install_controls_open_download_page(monkeypatch):
     window.ghostscript_install_action.trigger()
 
     assert opened == [
-        "https://artifex.com/downloads",
-        "https://artifex.com/downloads",
+        "https://ghostscript.com/releases/gsdnld.html",
+        "https://ghostscript.com/releases/gsdnld.html",
     ]
 
 

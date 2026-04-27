@@ -45,7 +45,7 @@ PDF compression uses Ghostscript. The app checks for Ghostscript on startup and 
 
 - If Ghostscript is available, PDF compression runs normally.
 - If Ghostscript is missing, PDF files are skipped and the original files are preserved.
-- Use the `설치` / `Install` button or `도구` / `Tools` menu to open the official Artifex download page for Ghostscript.
+- Use the `설치` / `Install` button or `도구` / `Tools` menu to open the official Ghostscript download page.
 
 ## Language
 
