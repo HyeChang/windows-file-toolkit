@@ -31,6 +31,10 @@ def write_pdf(path: Path, page_count: int):
         writer.write(output)
 
 
+def page_widths(path: Path) -> list[int]:
+    return [int(page.mediabox.width) for page in PdfReader(str(path)).pages]
+
+
 def make_window(monkeypatch, *, tesseract_available=False) -> MainWindow:
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     monkeypatch.setattr(
@@ -88,6 +92,43 @@ def test_pdf_tools_tab_extracts_selected_pages(monkeypatch):
     assert output.exists()
     assert len(PdfReader(str(output)).pages) == 1
     assert window.pdf_tools_tab.table.item(0, 3).text() == "완료"
+
+
+def test_pdf_merge_preview_uses_two_input_panels_and_result_order(monkeypatch):
+    window = make_window(monkeypatch)
+    workdir = case_dir("ui-pdf-merge-preview")
+    first = workdir / "first.pdf"
+    second = workdir / "second.pdf"
+    third = workdir / "third.pdf"
+    output = workdir / "merged.pdf"
+    write_pdf(first, 2)
+    write_pdf(second, 2)
+    write_pdf(third, 1)
+
+    window.pdf_tools_tab.operation_combo.setCurrentIndex(
+        window.pdf_tools_tab.operation_combo.findData("merge")
+    )
+    window.pdf_tools_tab.add_paths([first, second, third])
+    window.pdf_tools_tab.set_output_path(output)
+    window.pdf_tools_tab.preview_operation()
+
+    assert window.pdf_tools_tab.paths == [first, second]
+    assert window.pdf_tools_tab.pdf1_table.rowCount() == 2
+    assert window.pdf_tools_tab.pdf1_table.item(0, 1).text() == "1"
+    assert window.pdf_tools_tab.pdf2_table.rowCount() == 2
+    assert window.pdf_tools_tab.pdf2_table.item(1, 1).text() == "2"
+    assert window.pdf_tools_tab.merge_result_table.rowCount() == 4
+    assert [
+        window.pdf_tools_tab.merge_result_table.item(row, 1).text()
+        for row in range(4)
+    ] == ["first.pdf", "first.pdf", "second.pdf", "second.pdf"]
+
+    window.pdf_tools_tab.merge_result_table.selectRow(2)
+    window.pdf_tools_tab.move_merge_result_up()
+    window.pdf_tools_tab.apply_operation()
+
+    assert page_widths(output) == [200, 200, 201, 201]
+    assert window.pdf_tools_tab.merge_result_table.item(1, 1).text() == "second.pdf"
 
 
 def test_search_tab_finds_text_file_content(monkeypatch):
