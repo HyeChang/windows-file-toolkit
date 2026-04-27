@@ -25,6 +25,7 @@ from file_compressor.dependencies import TESSERACT_DOWNLOAD_URL, detect_tesserac
 from file_compressor.pdf_tools import (
     PdfPagePlan,
     PdfOperationResult,
+    build_single_pdf_plan,
     default_merge_plan,
     delete_pages,
     extract_pages,
@@ -56,6 +57,7 @@ TRANSLATIONS = {
         "pdf_1": "PDF 1",
         "pdf_2": "PDF 2",
         "merge_result": "병합 결과",
+        "page_plan": "페이지 작업 미리보기",
         "operation": "작업",
         "pages": "페이지",
         "rotation": "회전",
@@ -70,6 +72,15 @@ TRANSLATIONS = {
         "pdf_headers": ["파일", "작업", "출력", "상태"],
         "input_page_headers": ["파일", "페이지"],
         "merge_result_headers": ["순서", "파일", "페이지", "회전", "상태"],
+        "page_plan_headers": ["순서", "파일", "원본 페이지", "작업", "회전", "출력"],
+        "page_actions": {
+            "include": "포함",
+            "exclude": "제외",
+            "delete": "삭제",
+            "keep": "유지",
+            "split": "분할",
+            "rotate": "회전",
+        },
         "move_up": "위로",
         "move_down": "아래로",
         "remove_result": "결과 삭제",
@@ -105,6 +116,7 @@ TRANSLATIONS = {
         "pdf_1": "PDF 1",
         "pdf_2": "PDF 2",
         "merge_result": "Merge Result",
+        "page_plan": "Page Preview",
         "operation": "Operation",
         "pages": "Pages",
         "rotation": "Rotation",
@@ -119,6 +131,15 @@ TRANSLATIONS = {
         "pdf_headers": ["File", "Operation", "Output", "Status"],
         "input_page_headers": ["File", "Page"],
         "merge_result_headers": ["Order", "File", "Page", "Rotation", "Status"],
+        "page_plan_headers": ["Order", "File", "Source page", "Action", "Rotation", "Output"],
+        "page_actions": {
+            "include": "Include",
+            "exclude": "Exclude",
+            "delete": "Delete",
+            "keep": "Keep",
+            "split": "Split",
+            "rotate": "Rotate",
+        },
         "move_up": "Move up",
         "move_down": "Move down",
         "remove_result": "Remove",
@@ -163,6 +184,8 @@ class PdfToolsWidget(QWidget):
         self.rotation_label = QLabel()
         self.rotation_combo = QComboBox()
         self.table = FileToolTable(4, self.add_paths)
+        self.page_plan_group = QGroupBox()
+        self.page_plan_table = FileToolTable(6)
         self.pdf1_group = QGroupBox()
         self.pdf2_group = QGroupBox()
         self.merge_result_group = QGroupBox()
@@ -213,8 +236,10 @@ class PdfToolsWidget(QWidget):
         layout = QVBoxLayout()
         layout.addLayout(actions)
         layout.addWidget(self.options_group)
+        self._setup_page_plan_panel()
         self._setup_merge_panels()
         layout.addWidget(self.table)
+        layout.addWidget(self.page_plan_group)
         layout.addWidget(self.merge_splitter)
         self.setLayout(layout)
         self.set_language(language)
@@ -232,6 +257,7 @@ class PdfToolsWidget(QWidget):
         self.preview_button.setText(str(self.tr("preview")))
         self.apply_button.setText(str(self.tr("apply")))
         self.options_group.setTitle(str(self.tr("pdf_options")))
+        self.page_plan_group.setTitle(str(self.tr("page_plan")))
         self.pdf1_group.setTitle(str(self.tr("pdf_1")))
         self.pdf2_group.setTitle(str(self.tr("pdf_2")))
         self.merge_result_group.setTitle(str(self.tr("merge_result")))
@@ -242,6 +268,7 @@ class PdfToolsWidget(QWidget):
         self.page_selection_label.setText(str(self.tr("pages")))
         self.rotation_label.setText(str(self.tr("rotation")))
         self.table.setHorizontalHeaderLabels(self.tr("pdf_headers"))
+        self.page_plan_table.setHorizontalHeaderLabels(self.tr("page_plan_headers"))
         self.pdf1_table.setHorizontalHeaderLabels(self.tr("input_page_headers"))
         self.pdf2_table.setHorizontalHeaderLabels(self.tr("input_page_headers"))
         self.merge_result_table.setHorizontalHeaderLabels(self.tr("merge_result_headers"))
@@ -249,6 +276,11 @@ class PdfToolsWidget(QWidget):
         self._refresh_output_label()
         self._refresh_mode_visibility()
         self.refresh_table("ready")
+
+    def _setup_page_plan_panel(self):
+        layout = QVBoxLayout()
+        layout.addWidget(self.page_plan_table)
+        self.page_plan_group.setLayout(layout)
 
     def _setup_merge_panels(self):
         self.merge_splitter = QSplitter()
@@ -407,6 +439,7 @@ class PdfToolsWidget(QWidget):
             for column, value in enumerate(values):
                 self.table.setItem(row, column, QTableWidgetItem(value))
         self.table.resizeColumnsToContents()
+        self._refresh_page_plan_table()
 
     def status_text(self, status: str) -> str:
         return str(TRANSLATIONS[self.language].get(status, status))
@@ -435,13 +468,52 @@ class PdfToolsWidget(QWidget):
             self.output_label.setText(str(self.tr("output_selected")).format(path=self.output_path))
 
     def _refresh_mode_visibility(self):
-        is_merge = self.operation_combo.currentData() == "merge"
+        operation = self.operation_combo.currentData()
+        is_merge = operation == "merge"
+        uses_page_selection = operation in {"extract", "delete", "rotate", "reorder"}
         self.table.setVisible(not is_merge)
+        self.page_plan_group.setVisible(not is_merge)
         self.merge_splitter.setVisible(is_merge)
-        self.page_selection_label.setVisible(not is_merge)
-        self.page_selection_edit.setVisible(not is_merge)
-        self.rotation_label.setVisible(not is_merge)
-        self.rotation_combo.setVisible(self.operation_combo.currentData() == "rotate")
+        self.page_selection_label.setVisible(uses_page_selection)
+        self.page_selection_edit.setVisible(uses_page_selection)
+        self.rotation_label.setVisible(operation == "rotate")
+        self.rotation_combo.setVisible(operation == "rotate")
+
+    def _refresh_page_plan_table(self):
+        if not self.paths:
+            self.page_plan_table.setRowCount(0)
+            return
+
+        operation = self.operation_combo.currentData()
+        if operation == "merge":
+            self.page_plan_table.setRowCount(0)
+            return
+
+        try:
+            plan = build_single_pdf_plan(
+                self.paths[0],
+                operation,
+                self.page_selection_edit.text(),
+                self._planned_output(operation),
+                rotation=self.rotation_combo.currentData() or 0,
+            )
+        except Exception:
+            self.page_plan_table.setRowCount(0)
+            return
+
+        self.page_plan_table.setRowCount(len(plan))
+        for row, page in enumerate(plan):
+            values = [
+                str(page.result_order),
+                page.source.name,
+                str(page.page_number),
+                self.action_text(page.action),
+                str(page.rotation) if page.rotation else "",
+                str(page.output or self._planned_output(operation)),
+            ]
+            for column, value in enumerate(values):
+                self.page_plan_table.setItem(row, column, QTableWidgetItem(value))
+        self.page_plan_table.resizeColumnsToContents()
 
     def _refresh_merge_tables(self, status: str):
         self._refresh_input_page_table(self.pdf1_table, self.paths[0] if len(self.paths) > 0 else None)
@@ -490,6 +562,10 @@ class PdfToolsWidget(QWidget):
             replace(page, result_order=index)
             for index, page in enumerate(self.merge_plan, start=1)
         ]
+
+    def action_text(self, action: str) -> str:
+        actions = TRANSLATIONS[self.language]["page_actions"]
+        return str(actions.get(action, action))
 
 
 class ContentSearchWidget(QWidget):

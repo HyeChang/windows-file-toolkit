@@ -131,6 +131,97 @@ def test_pdf_merge_preview_uses_two_input_panels_and_result_order(monkeypatch):
     assert window.pdf_tools_tab.merge_result_table.item(1, 1).text() == "second.pdf"
 
 
+def test_pdf_delete_preview_shows_page_actions(monkeypatch):
+    window = make_window(monkeypatch)
+    workdir = case_dir("ui-pdf-delete-preview")
+    source = workdir / "source.pdf"
+    output = workdir / "deleted.pdf"
+    write_pdf(source, 3)
+
+    window.pdf_tools_tab.add_paths([source])
+    window.pdf_tools_tab.set_output_path(output)
+    window.pdf_tools_tab.operation_combo.setCurrentIndex(
+        window.pdf_tools_tab.operation_combo.findData("delete")
+    )
+    window.pdf_tools_tab.page_selection_edit.setText("2")
+    window.pdf_tools_tab.preview_operation()
+
+    assert window.pdf_tools_tab.page_plan_table.rowCount() == 3
+    assert [
+        window.pdf_tools_tab.page_plan_table.item(row, 3).text()
+        for row in range(3)
+    ] == ["유지", "삭제", "유지"]
+
+
+def test_pdf_split_preview_shows_output_for_each_page(monkeypatch):
+    window = make_window(monkeypatch)
+    workdir = case_dir("ui-pdf-split-preview")
+    source = workdir / "source.pdf"
+    output_dir = workdir / "pages"
+    write_pdf(source, 2)
+
+    window.pdf_tools_tab.add_paths([source])
+    window.pdf_tools_tab.set_output_path(output_dir)
+    window.pdf_tools_tab.operation_combo.setCurrentIndex(
+        window.pdf_tools_tab.operation_combo.findData("split")
+    )
+    window.pdf_tools_tab.preview_operation()
+
+    assert window.pdf_tools_tab.page_plan_table.rowCount() == 2
+    assert [
+        Path(window.pdf_tools_tab.page_plan_table.item(row, 5).text()).name
+        for row in range(2)
+    ] == ["source_page_001.pdf", "source_page_002.pdf"]
+
+
+def test_pdf_reorder_preview_shows_result_order_and_applies_it(monkeypatch):
+    window = make_window(monkeypatch)
+    workdir = case_dir("ui-pdf-reorder-preview")
+    source = workdir / "source.pdf"
+    output = workdir / "reordered.pdf"
+    write_pdf(source, 3)
+
+    window.pdf_tools_tab.add_paths([source])
+    window.pdf_tools_tab.set_output_path(output)
+    window.pdf_tools_tab.operation_combo.setCurrentIndex(
+        window.pdf_tools_tab.operation_combo.findData("reorder")
+    )
+    window.pdf_tools_tab.page_selection_edit.setText("3,1")
+    window.pdf_tools_tab.preview_operation()
+    window.pdf_tools_tab.apply_operation()
+
+    assert [
+        window.pdf_tools_tab.page_plan_table.item(row, 2).text()
+        for row in range(2)
+    ] == ["3", "1"]
+    assert page_widths(output) == [202, 200]
+
+
+def test_pdf_rotate_preview_shows_selected_rotation(monkeypatch):
+    window = make_window(monkeypatch)
+    workdir = case_dir("ui-pdf-rotate-preview")
+    source = workdir / "source.pdf"
+    output = workdir / "rotated.pdf"
+    write_pdf(source, 2)
+
+    window.pdf_tools_tab.add_paths([source])
+    window.pdf_tools_tab.set_output_path(output)
+    window.pdf_tools_tab.operation_combo.setCurrentIndex(
+        window.pdf_tools_tab.operation_combo.findData("rotate")
+    )
+    window.pdf_tools_tab.page_selection_edit.setText("2")
+    window.pdf_tools_tab.rotation_combo.setCurrentIndex(
+        window.pdf_tools_tab.rotation_combo.findData(90)
+    )
+    window.pdf_tools_tab.preview_operation()
+
+    assert [
+        window.pdf_tools_tab.page_plan_table.item(row, 3).text()
+        for row in range(2)
+    ] == ["유지", "회전"]
+    assert window.pdf_tools_tab.page_plan_table.item(1, 4).text() == "90"
+
+
 def test_search_tab_finds_text_file_content(monkeypatch):
     window = make_window(monkeypatch)
     workdir = case_dir("ui-search")
