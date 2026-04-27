@@ -49,6 +49,7 @@ def test_compress_pdf_skips_when_ghostscript_missing():
     assert result.status is JobStatus.SKIPPED
     assert result.output is None
     assert "Ghostscript" in result.message
+    assert "Install" in result.message
 
 
 def test_compress_pdf_removes_partial_output_when_ghostscript_fails(monkeypatch):

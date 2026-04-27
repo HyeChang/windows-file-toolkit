@@ -39,6 +39,14 @@ The desktop app includes three compression controls:
 
 Defaults are `1600 px`, JPEG quality `78`, and PDF level `Screen`.
 
+## PDF Compression Tool
+
+PDF compression uses Ghostscript. The app checks for Ghostscript on startup and shows the PDF tool status in the settings area.
+
+- If Ghostscript is available, PDF compression runs normally.
+- If Ghostscript is missing, PDF files are skipped and the original files are preserved.
+- Use the `설치` / `Install` button or `도구` / `Tools` menu to open the official Artifex download page for Ghostscript.
+
 ## Language
 
 The app supports Korean and English. Korean is selected by default, and the language selector changes the visible app labels, table headers, status text, and compression setting labels.
@@ -47,7 +55,7 @@ The app supports Korean and English. Korean is selected by default, and the lang
 
 - `.xlsx`, `.xlsm`, `.pptx`, `.pptm`: direct ZIP-package image optimization.
 - `.hwpx`: direct ZIP-package image optimization.
-- `.pdf`: Ghostscript required.
+- `.pdf`: Ghostscript required; use the in-app install button or Tools menu if it is missing.
 - `.hwp`: Hancom Office required; opened through Hancom automation and saved to the planned output path.
 - `.xls`: Microsoft Excel required; converted to `.xlsx`, then optimized.
 - `.ppt`: Microsoft PowerPoint required; converted to `.pptx`, then optimized.

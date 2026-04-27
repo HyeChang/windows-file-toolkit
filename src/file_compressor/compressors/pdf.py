@@ -62,7 +62,10 @@ def compress_pdf(
             status=JobStatus.SKIPPED,
             source=source,
             original_size=original_size,
-            message="Ghostscript is required for PDF compression.",
+            message=(
+                "Ghostscript is required for PDF compression. "
+                "Install it from the app's Ghostscript install button, then try again."
+            ),
         )
 
     temporary = _temporary_output_path(output)

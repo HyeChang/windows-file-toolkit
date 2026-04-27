@@ -2,6 +2,7 @@ from pathlib import Path
 
 from PySide6.QtWidgets import QApplication
 
+from file_compressor.dependencies import DependencyStatus
 from file_compressor.models import CompressionJob, CompressionOptions
 from file_compressor_app.ui import MainWindow
 
@@ -74,6 +75,10 @@ def item_text_for_data(combo, data):
 
 def test_window_defaults_to_korean_language(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    monkeypatch.setattr(
+        "file_compressor_app.ui.detect_ghostscript",
+        lambda: DependencyStatus(False),
+    )
     app()
     window = MainWindow()
 
@@ -87,6 +92,11 @@ def test_window_defaults_to_korean_language(monkeypatch):
     assert window.image_size_label.text() == "이미지 크기"
     assert window.jpeg_quality_label.text() == "JPEG 품질"
     assert window.pdf_level_label.text() == "PDF 수준"
+    assert window.tools_menu.title() == "도구"
+    assert window.ghostscript_install_action.text() == "Ghostscript 설치"
+    assert window.pdf_tool_status_label.text() == "PDF 압축 도구: 설치 필요"
+    assert window.ghostscript_install_button.text() == "설치"
+    assert window.ghostscript_install_button.isEnabled() is True
     assert table_headers(window) == ["파일", "형식", "원본", "상태", "압축 후", "출력"]
     assert item_text_for_data(window.image_dimension_combo, None) == "원본"
     assert item_text_for_data(window.pdf_preset_combo, "screen") == "화면용"
@@ -95,6 +105,10 @@ def test_window_defaults_to_korean_language(monkeypatch):
 
 def test_window_switches_visible_text_to_english(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    monkeypatch.setattr(
+        "file_compressor_app.ui.detect_ghostscript",
+        lambda: DependencyStatus(False),
+    )
     app()
     window = MainWindow()
 
@@ -109,6 +123,10 @@ def test_window_switches_visible_text_to_english(monkeypatch):
     assert window.image_size_label.text() == "Image size"
     assert window.jpeg_quality_label.text() == "JPEG quality"
     assert window.pdf_level_label.text() == "PDF level"
+    assert window.tools_menu.title() == "Tools"
+    assert window.ghostscript_install_action.text() == "Install Ghostscript"
+    assert window.pdf_tool_status_label.text() == "PDF compression tool: install required"
+    assert window.ghostscript_install_button.text() == "Install"
     assert table_headers(window) == ["File", "Type", "Original", "Status", "Compressed", "Output"]
     assert item_text_for_data(window.image_dimension_combo, None) == "Original"
     assert item_text_for_data(window.pdf_preset_combo, "screen") == "Screen"
@@ -132,6 +150,45 @@ def test_status_column_is_localized(monkeypatch):
 
     assert window.table.item(0, 3).text() == "Pending"
     assert window.status_label.text() == "1 file(s) ready."
+
+
+def test_pdf_tool_status_shows_available_when_ghostscript_exists(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    monkeypatch.setattr(
+        "file_compressor_app.ui.detect_ghostscript",
+        lambda: DependencyStatus(True, "C:/Tools/gswin64c.exe"),
+    )
+    app()
+    window = MainWindow()
+
+    assert window.pdf_tool_status_label.text() == "PDF 압축 도구: 사용 가능"
+    assert window.ghostscript_install_button.text() == "설치됨"
+    assert window.ghostscript_install_button.isEnabled() is False
+
+
+def test_ghostscript_install_controls_open_download_page(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    monkeypatch.setattr(
+        "file_compressor_app.ui.detect_ghostscript",
+        lambda: DependencyStatus(False),
+    )
+    app()
+    window = MainWindow()
+    opened = []
+
+    def fake_open_url(url):
+        opened.append(url.toString())
+        return True
+
+    monkeypatch.setattr("file_compressor_app.ui.QDesktopServices.openUrl", fake_open_url)
+
+    window.ghostscript_install_button.click()
+    window.ghostscript_install_action.trigger()
+
+    assert opened == [
+        "https://artifex.com/downloads",
+        "https://artifex.com/downloads",
+    ]
 
 
 def test_add_folder_adds_supported_files_with_planned_outputs(monkeypatch):

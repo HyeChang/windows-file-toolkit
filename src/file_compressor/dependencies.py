@@ -3,6 +3,9 @@ from shutil import which as default_which
 from typing import Callable
 
 
+GHOSTSCRIPT_DOWNLOAD_URL = "https://artifex.com/downloads"
+
+
 @dataclass(frozen=True)
 class DependencyStatus:
     available: bool

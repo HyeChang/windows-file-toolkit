@@ -1,6 +1,7 @@
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QUrl
+from PySide6.QtGui import QAction, QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -17,6 +18,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from file_compressor.dependencies import GHOSTSCRIPT_DOWNLOAD_URL, detect_ghostscript
 from file_compressor.discovery import discover_supported_files
 from file_compressor.engine import compress_file
 from file_compressor.models import CompressionJob, CompressionOptions
@@ -31,6 +33,12 @@ TRANSLATIONS = {
         "add_folder": "폴더 추가",
         "start_compression": "압축 시작",
         "settings": "고급 설정",
+        "tools": "도구",
+        "install_ghostscript": "Ghostscript 설치",
+        "pdf_tool_available": "PDF 압축 도구: 사용 가능",
+        "pdf_tool_missing": "PDF 압축 도구: 설치 필요",
+        "ghostscript_install_button": "설치",
+        "ghostscript_installed_button": "설치됨",
         "language": "언어",
         "image_size": "이미지 크기",
         "jpeg_quality": "JPEG 품질",
@@ -59,6 +67,12 @@ TRANSLATIONS = {
         "add_folder": "Add folder",
         "start_compression": "Start compression",
         "settings": "Advanced settings",
+        "tools": "Tools",
+        "install_ghostscript": "Install Ghostscript",
+        "pdf_tool_available": "PDF compression tool: available",
+        "pdf_tool_missing": "PDF compression tool: install required",
+        "ghostscript_install_button": "Install",
+        "ghostscript_installed_button": "Installed",
         "language": "Language",
         "image_size": "Image size",
         "jpeg_quality": "JPEG quality",
@@ -116,12 +130,15 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(self.tr("window_title"))
         self.resize(980, 560)
         self.jobs: list[FileJob] = []
+        self.ghostscript_status = detect_ghostscript()
 
         self.table = DropTable(self.add_paths)
         self.status_label = QLabel()
         self.add_button = QPushButton()
         self.add_folder_button = QPushButton()
         self.start_button = QPushButton()
+        self.pdf_tool_status_label = QLabel()
+        self.ghostscript_install_button = QPushButton()
         self.language_label = QLabel()
         self.image_size_label = QLabel()
         self.jpeg_quality_label = QLabel()
@@ -133,10 +150,12 @@ class MainWindow(QMainWindow):
 
         self._setup_language_control()
         self._setup_option_controls()
+        self._setup_menu()
 
         self.add_button.clicked.connect(self.pick_files)
         self.add_folder_button.clicked.connect(self.pick_folder)
         self.start_button.clicked.connect(self.compress_jobs)
+        self.ghostscript_install_button.clicked.connect(self.open_ghostscript_download)
         self.language_combo.currentIndexChanged.connect(self.change_language)
 
         actions = QHBoxLayout()
@@ -155,6 +174,8 @@ class MainWindow(QMainWindow):
         settings_layout.addWidget(self.jpeg_quality_combo)
         settings_layout.addWidget(self.pdf_level_label)
         settings_layout.addWidget(self.pdf_preset_combo)
+        settings_layout.addWidget(self.pdf_tool_status_label)
+        settings_layout.addWidget(self.ghostscript_install_button)
         settings_layout.addStretch()
         self.settings_group.setLayout(settings_layout)
 
@@ -181,6 +202,12 @@ class MainWindow(QMainWindow):
         self._set_image_dimension_items(1600)
         self._set_jpeg_quality_items(78)
         self._set_pdf_preset_items("screen")
+
+    def _setup_menu(self):
+        self.tools_menu = self.menuBar().addMenu("")
+        self.ghostscript_install_action = QAction(self)
+        self.ghostscript_install_action.triggered.connect(self.open_ghostscript_download)
+        self.tools_menu.addAction(self.ghostscript_install_action)
 
     def _set_image_dimension_items(self, selected):
         self.image_dimension_combo.blockSignals(True)
@@ -223,6 +250,8 @@ class MainWindow(QMainWindow):
         self.add_button.setText(str(self.tr("add_files")))
         self.add_folder_button.setText(str(self.tr("add_folder")))
         self.start_button.setText(str(self.tr("start_compression")))
+        self.tools_menu.setTitle(str(self.tr("tools")))
+        self.ghostscript_install_action.setText(str(self.tr("install_ghostscript")))
         self.settings_group.setTitle(str(self.tr("settings")))
         self.language_label.setText(str(self.tr("language")))
         self.image_size_label.setText(str(self.tr("image_size")))
@@ -233,8 +262,23 @@ class MainWindow(QMainWindow):
         self._set_image_dimension_items(selected_dimension)
         self._set_jpeg_quality_items(selected_quality)
         self._set_pdf_preset_items(selected_pdf_preset)
+        self._refresh_pdf_tool_status()
         self._refresh_status_label()
         self.refresh_table()
+
+    def _refresh_pdf_tool_status(self):
+        if self.ghostscript_status.available:
+            self.pdf_tool_status_label.setText(str(self.tr("pdf_tool_available")))
+            self.ghostscript_install_button.setText(str(self.tr("ghostscript_installed_button")))
+            self.ghostscript_install_button.setEnabled(False)
+            return
+
+        self.pdf_tool_status_label.setText(str(self.tr("pdf_tool_missing")))
+        self.ghostscript_install_button.setText(str(self.tr("ghostscript_install_button")))
+        self.ghostscript_install_button.setEnabled(True)
+
+    def open_ghostscript_download(self):
+        QDesktopServices.openUrl(QUrl(GHOSTSCRIPT_DOWNLOAD_URL))
 
     def _set_status(self, key: str, **context: int):
         self._status_key = key
