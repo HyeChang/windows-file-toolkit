@@ -2,7 +2,7 @@ from pathlib import Path
 
 from PySide6.QtWidgets import QApplication
 
-from file_compressor.models import CompressionOptions
+from file_compressor.models import CompressionJob, CompressionOptions
 from file_compressor_app.ui import MainWindow
 
 
@@ -80,6 +80,7 @@ def test_window_defaults_to_korean_language(monkeypatch):
     assert window.language_combo.currentData() == "ko"
     assert window.windowTitle() == "파일 압축기"
     assert window.add_button.text() == "파일 추가"
+    assert window.add_folder_button.text() == "폴더 추가"
     assert window.start_button.text() == "압축 시작"
     assert window.settings_group.title() == "고급 설정"
     assert window.language_label.text() == "언어"
@@ -101,6 +102,7 @@ def test_window_switches_visible_text_to_english(monkeypatch):
 
     assert window.windowTitle() == "File Compressor"
     assert window.add_button.text() == "Add files"
+    assert window.add_folder_button.text() == "Add folder"
     assert window.start_button.text() == "Start compression"
     assert window.settings_group.title() == "Advanced settings"
     assert window.language_label.text() == "Language"
@@ -130,3 +132,54 @@ def test_status_column_is_localized(monkeypatch):
 
     assert window.table.item(0, 3).text() == "Pending"
     assert window.status_label.text() == "1 file(s) ready."
+
+
+def test_add_folder_adds_supported_files_with_planned_outputs(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    app()
+    window = MainWindow()
+    source_root = Path(".worktrees/file-compressor-impl/.test-output/ui-folder/source")
+    nested = source_root / "nested"
+    nested.mkdir(parents=True, exist_ok=True)
+    top = source_root / "report.xlsx"
+    child = nested / "slides.ppt"
+    ignored = nested / "notes.txt"
+    top.write_bytes(b"xlsx")
+    child.write_bytes(b"ppt")
+    ignored.write_text("ignore")
+
+    window.add_folder(source_root)
+
+    assert len(window.jobs) == 2
+    assert all(isinstance(job.compression_job, CompressionJob) for job in window.jobs)
+    assert window.jobs[0].output_path == source_root.parent / "source_압축됨" / "nested" / "slides.pptx"
+    assert window.jobs[1].output_path == source_root.parent / "source_압축됨" / "report.xlsx"
+    assert window.table.item(0, 5).text() == str(window.jobs[0].output_path)
+    assert window.status_label.text() == "2개 파일 준비됨."
+
+
+def test_compress_jobs_uses_folder_compression_jobs(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    app()
+    window = MainWindow()
+    source_root = Path(".worktrees/file-compressor-impl/.test-output/ui-folder-compress/source")
+    source_root.mkdir(parents=True, exist_ok=True)
+    source = source_root / "report.xlsx"
+    source.write_bytes(b"xlsx")
+    window.add_folder(source_root)
+    calls = []
+
+    def fake_compress_file(target, options):
+        calls.append((target, options))
+        from file_compressor.models import CompressionResult, JobStatus
+
+        return CompressionResult(status=JobStatus.COMPLETED, source=target.source, output=target.output)
+
+    monkeypatch.setattr("file_compressor_app.ui.compress_file", fake_compress_file)
+
+    window.compress_jobs()
+
+    assert len(calls) == 1
+    assert isinstance(calls[0][0], CompressionJob)
+    assert calls[0][0].source == source
+    assert calls[0][0].output == source_root.parent / "source_압축됨" / "report.xlsx"

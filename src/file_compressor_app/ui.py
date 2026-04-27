@@ -17,8 +17,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from file_compressor.discovery import discover_supported_files
 from file_compressor.engine import compress_file
-from file_compressor.models import CompressionOptions
+from file_compressor.models import CompressionJob, CompressionOptions
+from file_compressor.planning import folder_batch_output_root, planned_batch_output_path
 from file_compressor_app.view_model import FileJob, result_to_job
 
 
@@ -26,6 +28,7 @@ TRANSLATIONS = {
     "ko": {
         "window_title": "파일 압축기",
         "add_files": "파일 추가",
+        "add_folder": "폴더 추가",
         "start_compression": "압축 시작",
         "settings": "고급 설정",
         "language": "언어",
@@ -37,6 +40,7 @@ TRANSLATIONS = {
         "ready_status": "{count}개 파일 준비됨.",
         "finished_status": "압축 완료.",
         "select_files": "파일 선택",
+        "select_folder": "폴더 선택",
         "file_filter": "문서 (*.xlsx *.xlsm *.pptx *.pptm *.pdf *.hwpx *.hwp *.xls *.ppt);;모든 파일 (*.*)",
         "original": "원본",
         "screen": "화면용",
@@ -52,6 +56,7 @@ TRANSLATIONS = {
     "en": {
         "window_title": "File Compressor",
         "add_files": "Add files",
+        "add_folder": "Add folder",
         "start_compression": "Start compression",
         "settings": "Advanced settings",
         "language": "Language",
@@ -63,6 +68,7 @@ TRANSLATIONS = {
         "ready_status": "{count} file(s) ready.",
         "finished_status": "Compression finished.",
         "select_files": "Select files",
+        "select_folder": "Select folder",
         "file_filter": "Documents (*.xlsx *.xlsm *.pptx *.pptm *.pdf *.hwpx *.hwp *.xls *.ppt);;All files (*.*)",
         "original": "Original",
         "screen": "Screen",
@@ -111,9 +117,10 @@ class MainWindow(QMainWindow):
         self.resize(980, 560)
         self.jobs: list[FileJob] = []
 
-        self.table = DropTable(self.add_files)
+        self.table = DropTable(self.add_paths)
         self.status_label = QLabel()
         self.add_button = QPushButton()
+        self.add_folder_button = QPushButton()
         self.start_button = QPushButton()
         self.language_label = QLabel()
         self.image_size_label = QLabel()
@@ -128,11 +135,13 @@ class MainWindow(QMainWindow):
         self._setup_option_controls()
 
         self.add_button.clicked.connect(self.pick_files)
+        self.add_folder_button.clicked.connect(self.pick_folder)
         self.start_button.clicked.connect(self.compress_jobs)
         self.language_combo.currentIndexChanged.connect(self.change_language)
 
         actions = QHBoxLayout()
         actions.addWidget(self.add_button)
+        actions.addWidget(self.add_folder_button)
         actions.addWidget(self.start_button)
         actions.addStretch()
 
@@ -212,6 +221,7 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle(str(self.tr("window_title")))
         self.add_button.setText(str(self.tr("add_files")))
+        self.add_folder_button.setText(str(self.tr("add_folder")))
         self.start_button.setText(str(self.tr("start_compression")))
         self.settings_group.setTitle(str(self.tr("settings")))
         self.language_label.setText(str(self.tr("language")))
@@ -253,13 +263,57 @@ class MainWindow(QMainWindow):
         )
         self.add_files([Path(file) for file in files])
 
+    def pick_folder(self):
+        folder = QFileDialog.getExistingDirectory(
+            self,
+            str(self.tr("select_folder")),
+            "",
+        )
+        if folder:
+            self.add_folder(Path(folder))
+
     def add_files(self, paths: list[Path]):
         for path in paths:
             if path.is_file():
-                size = path.stat().st_size
-                self.jobs.append(FileJob(path=path, original_size=size))
+                self._append_job(path)
         self.refresh_table()
         self._set_status("ready_status", count=len(self.jobs))
+
+    def add_folder(self, folder: Path):
+        if not folder.is_dir():
+            return
+
+        self._append_folder_jobs(folder)
+        self.refresh_table()
+        self._set_status("ready_status", count=len(self.jobs))
+
+    def add_paths(self, paths: list[Path]):
+        for path in paths:
+            if path.is_dir():
+                self._append_folder_jobs(path)
+            elif path.is_file():
+                self._append_job(path)
+        self.refresh_table()
+        self._set_status("ready_status", count=len(self.jobs))
+
+    def _append_folder_jobs(self, folder: Path):
+        batch_root = folder_batch_output_root(folder)
+        for source in discover_supported_files(folder):
+            output = planned_batch_output_path(source, folder, batch_root=batch_root)
+            compression_job = CompressionJob(source=source, output=output, batch_root=batch_root)
+            self._append_job(source, compression_job=compression_job)
+
+    def _append_job(self, path: Path, compression_job: CompressionJob | None = None):
+        size = path.stat().st_size
+        output_path = compression_job.output if compression_job else None
+        self.jobs.append(
+            FileJob(
+                path=path,
+                original_size=size,
+                output_path=output_path,
+                compression_job=compression_job,
+            )
+        )
 
     def compress_jobs(self):
         options = self.current_options()
@@ -268,8 +322,9 @@ class MainWindow(QMainWindow):
             self.refresh_table()
             QApplication.processEvents()
 
-            result = compress_file(job.path, options)
-            self.jobs[index] = result_to_job(result)
+            target = job.compression_job or job.path
+            result = compress_file(target, options)
+            self.jobs[index] = result_to_job(result, compression_job=job.compression_job)
             self.refresh_table()
             QApplication.processEvents()
         self._set_status("finished_status")

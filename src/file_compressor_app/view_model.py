@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 
-from file_compressor.models import CompressionResult, JobStatus
+from file_compressor.models import CompressionJob, CompressionResult, JobStatus
 
 
 def format_size(size: int | None) -> str:
@@ -21,6 +21,7 @@ class FileJob:
     original_size: int | None = None
     compressed_size: int | None = None
     output_path: Path | None = None
+    compression_job: CompressionJob | None = None
     message: str = ""
 
     @property
@@ -44,12 +45,18 @@ class FileJob:
         return str(self.output_path) if self.output_path else "-"
 
 
-def result_to_job(result: CompressionResult) -> FileJob:
+def result_to_job(
+    result: CompressionResult,
+    *,
+    compression_job: CompressionJob | None = None,
+) -> FileJob:
+    planned_output = compression_job.output if compression_job else None
     return FileJob(
         path=result.source,
         status=result.status.value,
         original_size=result.original_size,
         compressed_size=result.compressed_size,
-        output_path=result.output,
+        output_path=result.output or planned_output,
+        compression_job=compression_job,
         message=result.message,
     )
