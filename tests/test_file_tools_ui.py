@@ -168,3 +168,87 @@ def test_classify_tab_accepts_dropped_files_and_clears_preview(monkeypatch):
     assert window.classify_tab.paths == [first, second]
     assert window.classify_tab.plans == []
     assert window.classify_tab.table.item(1, 0).text() == "second.xlsx"
+
+
+def test_rename_tab_detail_panel_shows_selected_file_and_plan(monkeypatch):
+    window = make_window(monkeypatch)
+    workdir = case_dir("ui-rename-detail")
+    source = workdir / "2026.04.27_회의록.pdf"
+    source.write_bytes(b"pdf")
+
+    window.rename_tab.add_paths([source])
+    window.rename_tab.date_format_combo.setCurrentIndex(
+        window.rename_tab.date_format_combo.findData("suffix_compact")
+    )
+    window.rename_tab.preview_changes()
+    window.rename_tab.table.selectRow(0)
+
+    assert window.rename_tab.detail_panel.value_text("file_name") == "2026.04.27_회의록.pdf"
+    assert window.rename_tab.detail_panel.value_text("extension") == ".pdf"
+    assert window.rename_tab.detail_panel.value_text("planned_path") == str(workdir / "회의록_20260427.pdf")
+    assert window.rename_tab.detail_panel.value_text("status") == "준비"
+
+
+def test_classify_tab_detail_panel_shows_selected_file_and_destination(monkeypatch):
+    window = make_window(monkeypatch)
+    workdir = case_dir("ui-classify-detail")
+    output_root = workdir / "sorted"
+    source = workdir / "보고서.pdf"
+    source.write_bytes(b"pdf")
+
+    window.classify_tab.set_output_folder(output_root)
+    window.classify_tab.add_paths([source])
+    window.classify_tab.preview_moves()
+    window.classify_tab.table.selectRow(0)
+
+    assert window.classify_tab.detail_panel.value_text("file_name") == "보고서.pdf"
+    assert window.classify_tab.detail_panel.value_text("extension") == ".pdf"
+    assert window.classify_tab.detail_panel.value_text("planned_path") == str(output_root / "PDF" / "보고서.pdf")
+    assert window.classify_tab.detail_panel.value_text("status") == "준비"
+
+
+def test_rename_tab_undo_restores_last_applied_rename(monkeypatch):
+    window = make_window(monkeypatch)
+    workdir = case_dir("ui-rename-undo")
+    source = workdir / "보고서.pdf"
+    source.write_bytes(b"pdf")
+
+    window.rename_tab.add_paths([source])
+    window.rename_tab.suffix_edit.setText("_완료")
+    window.rename_tab.preview_changes()
+    window.rename_tab.apply_changes()
+    target = workdir / "보고서_완료.pdf"
+
+    assert target.exists()
+    assert window.rename_tab.undo_button.isEnabled() is True
+
+    window.rename_tab.undo_last_action()
+
+    assert source.exists()
+    assert not target.exists()
+    assert window.rename_tab.table.item(0, 2).text() == "되돌림"
+    assert window.rename_tab.undo_button.isEnabled() is False
+
+
+def test_classify_tab_undo_restores_last_applied_move(monkeypatch):
+    window = make_window(monkeypatch)
+    workdir = case_dir("ui-classify-undo")
+    output_root = workdir / "sorted"
+    source = workdir / "보고서.pdf"
+    source.write_bytes(b"pdf")
+
+    window.classify_tab.set_output_folder(output_root)
+    window.classify_tab.add_paths([source])
+    window.classify_tab.preview_moves()
+    window.classify_tab.apply_moves()
+    target = output_root / "PDF" / "보고서.pdf"
+
+    assert target.exists()
+    assert window.classify_tab.undo_button.isEnabled() is True
+
+    window.classify_tab.undo_last_action()
+
+    assert source.exists()
+    assert not target.exists()
+    assert window.classify_tab.table.item(0, 3).text() == "되돌림"
+    assert window.classify_tab.undo_button.isEnabled() is False

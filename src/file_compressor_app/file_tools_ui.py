@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QComboBox,
+    QFormLayout,
     QFileDialog,
     QGridLayout,
     QGroupBox,
@@ -28,6 +30,9 @@ from file_compressor.file_tools import (
     apply_rename_plan,
     build_classification_plan,
     build_rename_plan,
+    get_file_timestamps,
+    undo_classification_results,
+    undo_rename_results,
 )
 
 
@@ -39,6 +44,7 @@ TRANSLATIONS = {
         "clear_list": "목록 비우기",
         "preview": "미리보기",
         "apply": "적용",
+        "undo": "되돌리기",
         "select_files": "파일 선택",
         "select_folder": "폴더 선택",
         "all_files_filter": "모든 파일 (*.*)",
@@ -64,6 +70,17 @@ TRANSLATIONS = {
         "unchanged": "변경 없음",
         "skipped": "건너뜀",
         "failed": "실패",
+        "undone": "되돌림",
+        "details": "파일 상세 정보",
+        "no_selection": "선택 없음",
+        "file_name": "파일명",
+        "full_path": "전체 경로",
+        "extension": "확장자",
+        "size": "크기",
+        "created": "생성일",
+        "modified": "수정일",
+        "planned_path": "예정 위치",
+        "status": "상태",
         "none": "날짜 변경 안 함",
         "prefix_dash": "YYYY-MM-DD_파일명",
         "prefix_compact": "YYYYMMDD_파일명",
@@ -77,6 +94,7 @@ TRANSLATIONS = {
         "clear_list": "Clear list",
         "preview": "Preview",
         "apply": "Apply",
+        "undo": "Undo",
         "select_files": "Select files",
         "select_folder": "Select folder",
         "all_files_filter": "All files (*.*)",
@@ -102,6 +120,17 @@ TRANSLATIONS = {
         "unchanged": "Unchanged",
         "skipped": "Skipped",
         "failed": "Failed",
+        "undone": "Undone",
+        "details": "File details",
+        "no_selection": "No selection",
+        "file_name": "File name",
+        "full_path": "Full path",
+        "extension": "Extension",
+        "size": "Size",
+        "created": "Created",
+        "modified": "Modified",
+        "planned_path": "Planned path",
+        "status": "Status",
         "none": "Do not change dates",
         "prefix_dash": "YYYY-MM-DD_filename",
         "prefix_compact": "YYYYMMDD_filename",
@@ -144,12 +173,80 @@ class FileToolTable(QTableWidget):
         return mime_data.hasUrls() and any(url.isLocalFile() for url in mime_data.urls())
 
 
+class FileDetailPanel(QGroupBox):
+    FIELD_KEYS = (
+        "file_name",
+        "full_path",
+        "extension",
+        "size",
+        "created",
+        "modified",
+        "planned_path",
+        "status",
+    )
+
+    def __init__(self, language: str = "ko"):
+        super().__init__()
+        self.language = language
+        self.field_labels: dict[str, QLabel] = {}
+        self.value_labels: dict[str, QLabel] = {}
+        layout = QFormLayout()
+        for key in self.FIELD_KEYS:
+            field_label = QLabel()
+            value_label = QLabel()
+            value_label.setWordWrap(True)
+            self.field_labels[key] = field_label
+            self.value_labels[key] = value_label
+            layout.addRow(field_label, value_label)
+        self.setLayout(layout)
+        self.set_language(language)
+        self.clear()
+
+    def tr(self, key: str) -> str:
+        return str(TRANSLATIONS[self.language][key])
+
+    def set_language(self, language: str):
+        self.language = language
+        self.setTitle(self.tr("details"))
+        for key, label in self.field_labels.items():
+            label.setText(self.tr(key))
+
+    def clear(self):
+        for key in self.FIELD_KEYS:
+            self.value_labels[key].setText("-")
+        self.value_labels["status"].setText(self.tr("no_selection"))
+
+    def set_file(self, path: Path, *, planned_path: Path | None = None, status: str = ""):
+        path = Path(path)
+        stat_path = path if path.exists() else planned_path
+        self.value_labels["file_name"].setText(path.name)
+        self.value_labels["full_path"].setText(str(path))
+        self.value_labels["extension"].setText(path.suffix or "-")
+        self.value_labels["planned_path"].setText(str(planned_path) if planned_path else "-")
+        self.value_labels["status"].setText(status or "-")
+
+        if stat_path and Path(stat_path).exists():
+            stat_path = Path(stat_path)
+            timestamps = get_file_timestamps(stat_path)
+            self.value_labels["size"].setText(_format_size(stat_path.stat().st_size))
+            self.value_labels["created"].setText(_format_timestamp(timestamps.created))
+            self.value_labels["modified"].setText(_format_timestamp(timestamps.modified))
+        else:
+            self.value_labels["size"].setText("-")
+            self.value_labels["created"].setText("-")
+            self.value_labels["modified"].setText("-")
+
+    def value_text(self, key: str) -> str:
+        return self.value_labels[key].text()
+
+
 class RenameToolWidget(QWidget):
     def __init__(self, language: str = "ko"):
         super().__init__()
         self.language = language
         self.paths: list[Path] = []
         self.plans: list[RenamePlan] = []
+        self.last_results: list[RenamePlan] = []
 
         self.add_files_button = QPushButton()
         self.add_folder_button = QPushButton()
@@ -157,6 +254,7 @@ class RenameToolWidget(QWidget):
         self.clear_list_button = QPushButton()
         self.preview_button = QPushButton()
         self.apply_button = QPushButton()
+        self.undo_button = QPushButton()
         self.options_group = QGroupBox()
         self.prefix_label = QLabel()
         self.prefix_edit = QLineEdit()
@@ -175,10 +273,12 @@ class RenameToolWidget(QWidget):
         self.date_format_combo = QComboBox()
         self.preserve_modified_time_checkbox = QCheckBox()
         self.table = FileToolTable(4, self.add_paths)
+        self.detail_panel = FileDetailPanel(language)
 
         self.number_start_spin.setRange(1, 999999)
         self.number_start_spin.setValue(1)
         self.preserve_modified_time_checkbox.setChecked(True)
+        self.undo_button.setEnabled(False)
 
         self.add_files_button.clicked.connect(self.pick_files)
         self.add_folder_button.clicked.connect(self.pick_folder)
@@ -186,6 +286,8 @@ class RenameToolWidget(QWidget):
         self.clear_list_button.clicked.connect(self.clear_paths)
         self.preview_button.clicked.connect(self.preview_changes)
         self.apply_button.clicked.connect(self.apply_changes)
+        self.undo_button.clicked.connect(self.undo_last_action)
+        self.table.itemSelectionChanged.connect(self.refresh_detail_panel)
 
         actions = QHBoxLayout()
         actions.addWidget(self.add_files_button)
@@ -195,6 +297,7 @@ class RenameToolWidget(QWidget):
         actions.addStretch()
         actions.addWidget(self.preview_button)
         actions.addWidget(self.apply_button)
+        actions.addWidget(self.undo_button)
 
         options_layout = QGridLayout()
         options_layout.addWidget(self.prefix_label, 0, 0)
@@ -218,7 +321,10 @@ class RenameToolWidget(QWidget):
         layout = QVBoxLayout()
         layout.addLayout(actions)
         layout.addWidget(self.options_group)
-        layout.addWidget(self.table)
+        content_layout = QHBoxLayout()
+        content_layout.addWidget(self.table, 3)
+        content_layout.addWidget(self.detail_panel, 1)
+        layout.addLayout(content_layout)
         self.setLayout(layout)
         self.set_language(language)
 
@@ -234,6 +340,7 @@ class RenameToolWidget(QWidget):
         self.clear_list_button.setText(str(self.tr("clear_list")))
         self.preview_button.setText(str(self.tr("preview")))
         self.apply_button.setText(str(self.tr("apply")))
+        self.undo_button.setText(str(self.tr("undo")))
         self.options_group.setTitle(str(self.tr("rename_options")))
         self.prefix_label.setText(str(self.tr("prefix")))
         self.suffix_label.setText(str(self.tr("suffix")))
@@ -246,8 +353,10 @@ class RenameToolWidget(QWidget):
         self.date_format_label.setText(str(self.tr("date_format")))
         self.preserve_modified_time_checkbox.setText(str(self.tr("preserve_modified_time")))
         self.table.setHorizontalHeaderLabels(self.tr("rename_headers"))
+        self.detail_panel.set_language(language)
         self._set_date_format_items(selected_date_format)
         self.refresh_table()
+        self.refresh_detail_panel()
 
     def _set_date_format_items(self, selected: str):
         self.date_format_combo.blockSignals(True)
@@ -279,6 +388,7 @@ class RenameToolWidget(QWidget):
                 known.add(path)
         self.plans = []
         self.refresh_table()
+        self.refresh_detail_panel()
 
     def remove_selected_paths(self):
         selected_rows = sorted(
@@ -290,11 +400,13 @@ class RenameToolWidget(QWidget):
                 del self.paths[row]
         self.plans = []
         self.refresh_table()
+        self.refresh_detail_panel()
 
     def clear_paths(self):
         self.paths.clear()
         self.plans.clear()
         self.refresh_table()
+        self.refresh_detail_panel()
 
     def current_options(self) -> RenameOptions:
         return RenameOptions(
@@ -313,13 +425,24 @@ class RenameToolWidget(QWidget):
     def preview_changes(self):
         self.plans = build_rename_plan(self.paths, self.current_options())
         self.refresh_table()
+        self.refresh_detail_panel()
 
     def apply_changes(self):
         if not self.plans:
             self.preview_changes()
         self.plans = apply_rename_plan(self.plans)
+        self.last_results = self.plans
+        self.undo_button.setEnabled(any(plan.status == "completed" for plan in self.last_results))
         self.paths = [plan.target if plan.status == "completed" else plan.source for plan in self.plans]
         self.refresh_table()
+        self.refresh_detail_panel()
+
+    def undo_last_action(self):
+        self.plans = undo_rename_results(self.last_results)
+        self.paths = [plan.source if plan.status == "undone" else plan.target for plan in self.plans]
+        self.undo_button.setEnabled(False)
+        self.refresh_table()
+        self.refresh_detail_panel()
 
     def refresh_table(self):
         row_count = len(self.plans) if self.plans else len(self.paths)
@@ -337,6 +460,7 @@ class RenameToolWidget(QWidget):
             for row, path in enumerate(self.paths):
                 self._set_row(row, [path.name, "", "", str(path.parent)])
         self.table.resizeColumnsToContents()
+        self.refresh_detail_panel()
 
     def status_text(self, status: str) -> str:
         return str(TRANSLATIONS[self.language].get(status, status))
@@ -344,6 +468,31 @@ class RenameToolWidget(QWidget):
     def _set_row(self, row: int, values: list[str]):
         for column, value in enumerate(values):
             self.table.setItem(row, column, QTableWidgetItem(value))
+
+    def refresh_detail_panel(self):
+        row = self._selected_row()
+        if row is None:
+            self.detail_panel.clear()
+            return
+        if self.plans:
+            plan = self.plans[row]
+            self.detail_panel.set_file(
+                plan.source,
+                planned_path=plan.target,
+                status=self.status_text(plan.status),
+            )
+            return
+        self.detail_panel.set_file(self.paths[row])
+
+    def _selected_row(self) -> int | None:
+        selected = self.table.selectionModel().selectedRows()
+        if not selected:
+            return None
+        row = selected[0].row()
+        row_count = len(self.plans) if self.plans else len(self.paths)
+        if 0 <= row < row_count:
+            return row
+        return None
 
 
 class ClassifyToolWidget(QWidget):
@@ -353,6 +502,7 @@ class ClassifyToolWidget(QWidget):
         self.paths: list[Path] = []
         self.output_folder: Path | None = None
         self.plans: list[ClassificationPlan] = []
+        self.last_results: list[ClassificationPlan] = []
 
         self.add_files_button = QPushButton()
         self.add_folder_button = QPushButton()
@@ -362,7 +512,10 @@ class ClassifyToolWidget(QWidget):
         self.clear_list_button = QPushButton()
         self.preview_button = QPushButton()
         self.apply_button = QPushButton()
+        self.undo_button = QPushButton()
         self.table = FileToolTable(4, self.add_paths)
+        self.detail_panel = FileDetailPanel(language)
+        self.undo_button.setEnabled(False)
 
         self.add_files_button.clicked.connect(self.pick_files)
         self.add_folder_button.clicked.connect(self.pick_folder)
@@ -371,6 +524,8 @@ class ClassifyToolWidget(QWidget):
         self.clear_list_button.clicked.connect(self.clear_paths)
         self.preview_button.clicked.connect(self.preview_moves)
         self.apply_button.clicked.connect(self.apply_moves)
+        self.undo_button.clicked.connect(self.undo_last_action)
+        self.table.itemSelectionChanged.connect(self.refresh_detail_panel)
 
         actions = QHBoxLayout()
         actions.addWidget(self.add_files_button)
@@ -382,10 +537,14 @@ class ClassifyToolWidget(QWidget):
         actions.addStretch()
         actions.addWidget(self.preview_button)
         actions.addWidget(self.apply_button)
+        actions.addWidget(self.undo_button)
 
         layout = QVBoxLayout()
         layout.addLayout(actions)
-        layout.addWidget(self.table)
+        content_layout = QHBoxLayout()
+        content_layout.addWidget(self.table, 3)
+        content_layout.addWidget(self.detail_panel, 1)
+        layout.addLayout(content_layout)
         self.setLayout(layout)
         self.set_language(language)
 
@@ -401,9 +560,12 @@ class ClassifyToolWidget(QWidget):
         self.clear_list_button.setText(str(self.tr("clear_list")))
         self.preview_button.setText(str(self.tr("preview")))
         self.apply_button.setText(str(self.tr("apply")))
+        self.undo_button.setText(str(self.tr("undo")))
         self.table.setHorizontalHeaderLabels(self.tr("classify_headers"))
+        self.detail_panel.set_language(language)
         self._refresh_output_folder_label()
         self.refresh_table()
+        self.refresh_detail_panel()
 
     def pick_files(self):
         files, _ = QFileDialog.getOpenFileNames(
@@ -429,6 +591,7 @@ class ClassifyToolWidget(QWidget):
         self.plans = []
         self._refresh_output_folder_label()
         self.refresh_table()
+        self.refresh_detail_panel()
 
     def add_paths(self, paths: list[Path]):
         known = set(self.paths)
@@ -438,6 +601,7 @@ class ClassifyToolWidget(QWidget):
                 known.add(path)
         self.plans = []
         self.refresh_table()
+        self.refresh_detail_panel()
 
     def remove_selected_paths(self):
         selected_rows = sorted(
@@ -449,26 +613,40 @@ class ClassifyToolWidget(QWidget):
                 del self.paths[row]
         self.plans = []
         self.refresh_table()
+        self.refresh_detail_panel()
 
     def clear_paths(self):
         self.paths.clear()
         self.plans.clear()
         self.refresh_table()
+        self.refresh_detail_panel()
 
     def preview_moves(self):
         if self.output_folder is None:
             self.plans = []
             self.refresh_table()
+            self.refresh_detail_panel()
             return
         self.plans = build_classification_plan(self.paths, self.output_folder)
         self.refresh_table()
+        self.refresh_detail_panel()
 
     def apply_moves(self):
         if not self.plans:
             self.preview_moves()
         self.plans = apply_classification_plan(self.plans)
+        self.last_results = self.plans
+        self.undo_button.setEnabled(any(plan.status == "completed" for plan in self.last_results))
         self.paths = [plan.target if plan.status == "completed" else plan.source for plan in self.plans]
         self.refresh_table()
+        self.refresh_detail_panel()
+
+    def undo_last_action(self):
+        self.plans = undo_classification_results(self.last_results)
+        self.paths = [plan.source if plan.status == "undone" else plan.target for plan in self.plans]
+        self.undo_button.setEnabled(False)
+        self.refresh_table()
+        self.refresh_detail_panel()
 
     def refresh_table(self):
         row_count = len(self.plans) if self.plans else len(self.paths)
@@ -488,6 +666,7 @@ class ClassifyToolWidget(QWidget):
             for row, path in enumerate(self.paths):
                 self._set_row(row, [path.name, "", "", ""])
         self.table.resizeColumnsToContents()
+        self.refresh_detail_panel()
 
     def status_text(self, status: str) -> str:
         return str(TRANSLATIONS[self.language].get(status, status))
@@ -502,6 +681,31 @@ class ClassifyToolWidget(QWidget):
         for column, value in enumerate(values):
             self.table.setItem(row, column, QTableWidgetItem(value))
 
+    def refresh_detail_panel(self):
+        row = self._selected_row()
+        if row is None:
+            self.detail_panel.clear()
+            return
+        if self.plans:
+            plan = self.plans[row]
+            self.detail_panel.set_file(
+                plan.source,
+                planned_path=plan.target,
+                status=self.status_text(plan.status),
+            )
+            return
+        self.detail_panel.set_file(self.paths[row])
+
+    def _selected_row(self) -> int | None:
+        selected = self.table.selectionModel().selectedRows()
+        if not selected:
+            return None
+        row = selected[0].row()
+        row_count = len(self.plans) if self.plans else len(self.paths)
+        if 0 <= row < row_count:
+            return row
+        return None
+
 
 def _expand_files(paths: list[Path]) -> list[Path]:
     files: list[Path] = []
@@ -512,3 +716,15 @@ def _expand_files(paths: list[Path]) -> list[Path]:
         elif path.is_file():
             files.append(path)
     return files
+
+
+def _format_timestamp(timestamp: float) -> str:
+    return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _format_size(size: int) -> str:
+    if size < 1024:
+        return f"{size} B"
+    if size < 1024 * 1024:
+        return f"{size / 1024:.1f} KB"
+    return f"{size / (1024 * 1024):.1f} MB"
