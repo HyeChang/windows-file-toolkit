@@ -4,6 +4,12 @@ Windows desktop app for reducing the size of Excel, PowerPoint, PDF, HWPX, HWP, 
 
 The app preserves original files. Individual files are written next to the source file with `_compressed` in the file name. Folder batches are written under a newly planned sibling parent folder such as `원본폴더_압축됨`, preserving the original subfolder structure. If an output folder is selected, compressed results are written under that folder instead.
 
+The main window is split into tabs:
+
+- `문서 압축` / `Compression`: compress supported document files.
+- `파일 이름 변경` / `Rename`: rename many files with preview-first rules.
+- `파일 자동 분류` / `Classify`: move files into category folders.
+
 ## Run from Source
 
 ```powershell
@@ -40,6 +46,22 @@ Use `출력 폴더 선택` / `Select output folder` to collect compressed files 
 ## List Management
 
 Use `선택 삭제` / `Remove selected` to remove selected rows from the queue, or `목록 비우기` / `Clear list` to reset the queue before starting compression.
+
+## Batch Rename
+
+Use the `파일 이름 변경` / `Rename` tab to add files or folders, configure rules, preview the result, and apply the changes.
+
+- Prefix, suffix, find/replace, numbering, space cleanup, and Windows-invalid character cleanup are supported.
+- Date normalization detects names such as `20260427`, `2026-04-27`, `2026.04.27`, `2026_04_27`, `2026년 4월 27일`, and `260427`.
+- Date output formats include `YYYY-MM-DD_파일명`, `YYYYMMDD_파일명`, `파일명_YYYY-MM-DD`, and `파일명_YYYYMMDD`.
+- Existing files are not overwritten. Collisions are resolved with `_2`, `_3`, and so on.
+- `수정일 유지` / `Preserve modified date` is enabled by default, so renaming restores the original file modified timestamp after the rename.
+
+## File Classification
+
+Use the `파일 자동 분류` / `Classify` tab to add files or folders, choose an output folder, preview destinations, and move files.
+
+Files are grouped under category folders such as `PDF`, `Excel`, `PowerPoint`, `HWP`, `Images`, `Documents`, `Archives`, and `Other`. Existing files are not overwritten; name collisions are resolved with `_2`, `_3`, and so on.
 
 ## Progress and Results
 
