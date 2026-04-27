@@ -26,6 +26,88 @@ def test_hwp_is_skipped_when_hancom_is_unavailable():
     assert "Hancom Office" in result.message
 
 
+def test_hwp_opens_and_saves_to_planned_output():
+    workdir = case_dir("hwp-save")
+    source = workdir / "doc.hwp"
+    source.write_bytes(b"hwp")
+    output = workdir / "out" / "doc.hwp"
+    events = []
+
+    class FakeHwp:
+        def RegisterModule(self, dll_name, module_name):
+            events.append(("register", dll_name, module_name))
+
+        def Open(self, target):
+            events.append(("open", Path(target)))
+            return True
+
+        def SaveAs(self, target, format_name):
+            events.append(("save_as", Path(target), format_name))
+            Path(target).write_bytes(b"saved-hwp")
+            return True
+
+        def Quit(self):
+            events.append(("quit",))
+
+    def fake_dispatch(progid):
+        events.append(("dispatch", progid))
+        return FakeHwp()
+
+    result = compress_hwp(
+        source,
+        output,
+        automation_available=lambda: True,
+        dispatch=fake_dispatch,
+    )
+
+    assert result.status is JobStatus.COMPLETED
+    assert result.source == source
+    assert result.output == output
+    assert result.original_size == len(b"hwp")
+    assert result.compressed_size == len(b"saved-hwp")
+    assert output.read_bytes() == b"saved-hwp"
+    assert events[0] == ("dispatch", "HWPFrame.HwpObject")
+    assert any(event[0] == "register" for event in events)
+    assert any(event[0] == "open" for event in events)
+    assert any(event[0] == "save_as" and event[2] == "HWP" for event in events)
+    assert ("quit",) in events
+
+
+def test_hwp_returns_failed_and_quits_when_save_fails():
+    workdir = case_dir("hwp-save-fails")
+    source = workdir / "doc.hwp"
+    source.write_bytes(b"hwp")
+    output = workdir / "doc_compressed.hwp"
+    events = []
+
+    class FakeHwp:
+        def RegisterModule(self, dll_name, module_name):
+            events.append(("register", dll_name, module_name))
+
+        def Open(self, target):
+            events.append(("open", Path(target)))
+            return True
+
+        def SaveAs(self, target, format_name):
+            events.append(("save_as", Path(target), format_name))
+            raise RuntimeError("save failed")
+
+        def Quit(self):
+            events.append(("quit",))
+
+    result = compress_hwp(
+        source,
+        output,
+        automation_available=lambda: True,
+        dispatch=lambda progid: FakeHwp(),
+    )
+
+    assert result.status is JobStatus.FAILED
+    assert result.source == source
+    assert "save failed" in result.message
+    assert ("quit",) in events
+
+
 def test_legacy_office_is_skipped_when_office_is_unavailable():
     workdir = case_dir("legacy-office-missing")
     source = workdir / "legacy.xls"

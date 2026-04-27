@@ -8,6 +8,7 @@ from file_compressor.models import CompressionOptions, CompressionResult, JobSta
 
 
 EXCEL_APPLICATION_PROGID = "Excel.Application"
+HWP_APPLICATION_PROGID = "HWPFrame.HwpObject"
 POWERPOINT_APPLICATION_PROGID = "PowerPoint.Application"
 EXCEL_XLSX_FILE_FORMAT = 51
 POWERPOINT_PPTX_FILE_FORMAT = 24
@@ -41,7 +42,7 @@ def is_progid_registered(
 
 
 def default_hancom_available() -> bool:
-    return is_progid_registered("HWPFrame.HwpObject")
+    return is_progid_registered(HWP_APPLICATION_PROGID)
 
 
 def default_excel_available() -> bool:
@@ -78,6 +79,7 @@ def compress_hwp(
     *,
     options: CompressionOptions | None = None,
     automation_available: Callable[[], bool] = default_hancom_available,
+    dispatch: Callable[[str], Any] = default_com_dispatch,
 ) -> CompressionResult:
     if not automation_available():
         return CompressionResult(
@@ -87,12 +89,29 @@ def compress_hwp(
             message="Hancom Office is required for HWP compression.",
         )
 
-    return CompressionResult(
-        status=JobStatus.SKIPPED,
-        source=source,
-        original_size=_source_size(source),
-        message="HWP automation is detected but compression flow is not implemented in this version.",
-    )
+    original_size = _source_size(source)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    uninitialize = _initialize_com()
+    try:
+        app = dispatch(HWP_APPLICATION_PROGID)
+        _save_hwp_document(app, source, output)
+        return CompressionResult(
+            status=JobStatus.COMPLETED,
+            source=source,
+            output=output,
+            original_size=original_size,
+            compressed_size=output.stat().st_size if output.exists() else None,
+            message="Compressed",
+        )
+    except Exception as exc:
+        return CompressionResult(
+            status=JobStatus.FAILED,
+            source=source,
+            original_size=original_size,
+            message=str(exc),
+        )
+    finally:
+        uninitialize()
 
 
 def compress_legacy_office(
@@ -197,6 +216,23 @@ def _convert_powerpoint_to_pptx(app: Any, source: Path, output: Path) -> None:
                 presentation.Close()
         finally:
             app.Quit()
+
+
+def _save_hwp_document(app: Any, source: Path, output: Path) -> None:
+    try:
+        app.RegisterModule("FilePathCheckDLL", "FilePathCheckerModule")
+    except Exception:
+        pass
+
+    try:
+        opened = app.Open(str(source.resolve()))
+        if opened is False:
+            raise RuntimeError("HWP file could not be opened.")
+        saved = app.SaveAs(str(output.resolve()), "HWP")
+        if saved is False:
+            raise RuntimeError("HWP file could not be saved.")
+    finally:
+        app.Quit()
 
 
 def _remove_file_if_exists(path: Path) -> None:
