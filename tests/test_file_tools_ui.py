@@ -59,11 +59,11 @@ class FakeDropEvent:
 def test_main_window_separates_features_into_localized_tabs(monkeypatch):
     window = make_window(monkeypatch)
 
-    assert tab_labels(window) == ["문서 압축", "파일 이름 변경", "파일 자동 분류", "파일 날짜 변경"]
+    assert tab_labels(window) == ["문서 압축", "파일 이름 변경", "파일 자동 분류", "파일 날짜 변경", "PDF 도구", "파일 내용 검색"]
 
     window.language_combo.setCurrentIndex(window.language_combo.findData("en"))
 
-    assert tab_labels(window) == ["Compression", "Rename", "Classify", "Dates"]
+    assert tab_labels(window) == ["Compression", "Rename", "Classify", "Dates", "PDF Tools", "Search"]
     assert window.rename_tab.add_files_button.text() == "Add files"
     assert window.classify_tab.output_folder_button.text() == "Select output folder"
     assert window.date_tab.add_files_button.text() == "Add files"
