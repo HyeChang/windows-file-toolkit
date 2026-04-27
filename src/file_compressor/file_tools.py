@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import ctypes
 from dataclasses import dataclass, replace
-from datetime import date
+from datetime import date, datetime, time as datetime_time
 import os
 import re
 import shutil
@@ -43,6 +44,21 @@ class ClassificationPlan:
     category: str
     status: str
     message: str = ""
+
+
+@dataclass(frozen=True)
+class FileTimestamps:
+    created: float
+    modified: float
+
+
+@dataclass(frozen=True)
+class DateChangePlan:
+    source: Path
+    target_timestamps: FileTimestamps
+    status: str
+    message: str = ""
+    original_timestamps: FileTimestamps | None = None
 
 
 def clean_file_stem(stem: str, *, clean_spaces: bool = True, clean_special: bool = True) -> str:
@@ -214,6 +230,184 @@ def apply_classification_plan(plans: list[ClassificationPlan]) -> list[Classific
     return results
 
 
+def get_file_timestamps(path: Path) -> FileTimestamps:
+    stat = Path(path).stat()
+    return FileTimestamps(created=stat.st_ctime, modified=stat.st_mtime)
+
+
+def set_file_timestamps(path: Path, *, created: float | None = None, modified: float | None = None):
+    path = Path(path)
+    if os.name == "nt":
+        _set_windows_file_timestamps(path, created=created, modified=modified)
+        return
+
+    if created is not None:
+        raise OSError("Creation time changes require Windows.")
+    if modified is not None:
+        current = path.stat()
+        os.utime(path, (current.st_atime, modified))
+
+
+def build_date_change_plan(
+    paths: list[Path],
+    *,
+    created_timestamp: float | None = None,
+    modified_timestamp: float | None = None,
+    from_filename: bool = False,
+    use_now: bool = False,
+    now_timestamp: float | None = None,
+    change_created: bool = True,
+    change_modified: bool = True,
+) -> list[DateChangePlan]:
+    plans: list[DateChangePlan] = []
+    for source in paths:
+        source = Path(source)
+        if not source.exists():
+            plans.append(
+                DateChangePlan(
+                    source=source,
+                    target_timestamps=FileTimestamps(0, 0),
+                    status="skipped",
+                    message="Source file does not exist.",
+                )
+            )
+            continue
+
+        current = get_file_timestamps(source)
+        target_timestamp: float | None = None
+        if from_filename:
+            extracted = extract_date_from_name(source.name)
+            if extracted is None:
+                plans.append(
+                    DateChangePlan(
+                        source=source,
+                        target_timestamps=current,
+                        status="skipped",
+                        message="No date found in file name.",
+                    )
+                )
+                continue
+            target_timestamp = _timestamp_from_date(extracted)
+        elif use_now:
+            target_timestamp = now_timestamp if now_timestamp is not None else datetime.now().timestamp()
+
+        target_created = current.created
+        target_modified = current.modified
+        if change_created:
+            target_created = _selected_timestamp(created_timestamp, target_timestamp, current.created)
+        if change_modified:
+            target_modified = _selected_timestamp(modified_timestamp, target_timestamp, current.modified)
+
+        plans.append(
+            DateChangePlan(
+                source=source,
+                target_timestamps=FileTimestamps(target_created, target_modified),
+                status="ready",
+            )
+        )
+    return plans
+
+
+def apply_date_change_plan(plans: list[DateChangePlan]) -> list[DateChangePlan]:
+    results: list[DateChangePlan] = []
+    for plan in plans:
+        if plan.status != "ready":
+            results.append(plan)
+            continue
+        if not plan.source.exists():
+            results.append(replace(plan, status="failed", message="Source file does not exist."))
+            continue
+
+        try:
+            original = get_file_timestamps(plan.source)
+            set_file_timestamps(
+                plan.source,
+                created=plan.target_timestamps.created,
+                modified=plan.target_timestamps.modified,
+            )
+        except OSError as exc:
+            results.append(replace(plan, status="failed", message=str(exc)))
+        else:
+            results.append(
+                replace(
+                    plan,
+                    status="completed",
+                    message="Dates changed.",
+                    original_timestamps=original,
+                )
+            )
+    return results
+
+
+def undo_rename_results(plans: list[RenamePlan]) -> list[RenamePlan]:
+    results: list[RenamePlan] = []
+    for plan in plans:
+        if plan.status != "completed":
+            results.append(plan)
+            continue
+        if not plan.target.exists():
+            results.append(replace(plan, status="failed", message="Changed file does not exist."))
+            continue
+        if plan.source.exists():
+            results.append(replace(plan, status="failed", message="Original path already exists."))
+            continue
+        try:
+            plan.target.rename(plan.source)
+        except OSError as exc:
+            results.append(replace(plan, status="failed", message=str(exc)))
+        else:
+            results.append(replace(plan, status="undone", message="Undo completed."))
+    return results
+
+
+def undo_classification_results(plans: list[ClassificationPlan]) -> list[ClassificationPlan]:
+    results: list[ClassificationPlan] = []
+    for plan in plans:
+        if plan.status != "completed":
+            results.append(plan)
+            continue
+        if not plan.target.exists():
+            results.append(replace(plan, status="failed", message="Moved file does not exist."))
+            continue
+        if plan.source.exists():
+            results.append(replace(plan, status="failed", message="Original path already exists."))
+            continue
+        try:
+            plan.source.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(plan.target), str(plan.source))
+        except OSError as exc:
+            results.append(replace(plan, status="failed", message=str(exc)))
+        else:
+            results.append(replace(plan, status="undone", message="Undo completed."))
+    return results
+
+
+def undo_date_change_results(plans: list[DateChangePlan]) -> list[DateChangePlan]:
+    results: list[DateChangePlan] = []
+    for plan in plans:
+        if plan.status != "completed":
+            results.append(plan)
+            continue
+        if plan.original_timestamps is None:
+            results.append(replace(plan, status="failed", message="Original timestamps are missing."))
+            continue
+        if not plan.source.exists():
+            results.append(replace(plan, status="failed", message="Source file does not exist."))
+            continue
+
+        try:
+            set_file_timestamps(
+                plan.source,
+                created=plan.original_timestamps.created,
+                modified=plan.original_timestamps.modified,
+            )
+        except OSError as exc:
+            results.append(replace(plan, status="failed", message=str(exc)))
+        else:
+            results.append(replace(plan, status="undone", message="Undo completed."))
+    return results
+
+
 def _build_target_stem(source_stem: str, options: RenameOptions, index: int) -> str:
     stem = source_stem
     if options.find_text:
@@ -309,3 +503,71 @@ def _unique_path(path: Path, occupied: set[Path]) -> Path:
         candidate = path.with_name(f"{path.stem}_{counter}{path.suffix}")
         counter += 1
     return candidate
+
+
+def _selected_timestamp(manual: float | None, shared: float | None, current: float) -> float:
+    if shared is not None:
+        return shared
+    if manual is not None:
+        return manual
+    return current
+
+
+def _timestamp_from_date(value: date) -> float:
+    return datetime.combine(value, datetime_time()).timestamp()
+
+
+def _set_windows_file_timestamps(path: Path, *, created: float | None, modified: float | None):
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateFileW.restype = ctypes.c_void_p
+    kernel32.SetFileTime.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(_FILETIME),
+        ctypes.POINTER(_FILETIME),
+        ctypes.POINTER(_FILETIME),
+    ]
+    kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+    file_write_attributes = 0x0100
+    file_share_read = 0x00000001
+    file_share_write = 0x00000002
+    file_share_delete = 0x00000004
+    open_existing = 3
+    file_flag_backup_semantics = 0x02000000
+    invalid_handle_value = ctypes.c_void_p(-1).value
+
+    handle = kernel32.CreateFileW(
+        str(path),
+        file_write_attributes,
+        file_share_read | file_share_write | file_share_delete,
+        None,
+        open_existing,
+        file_flag_backup_semantics if path.is_dir() else 0,
+        None,
+    )
+    if handle == invalid_handle_value:
+        raise ctypes.WinError(ctypes.get_last_error())
+
+    try:
+        creation_time = _timestamp_to_filetime(created)
+        last_write_time = _timestamp_to_filetime(modified)
+        creation_pointer = ctypes.byref(creation_time) if creation_time is not None else None
+        last_write_pointer = ctypes.byref(last_write_time) if last_write_time is not None else None
+        if not kernel32.SetFileTime(handle, creation_pointer, None, last_write_pointer):
+            raise ctypes.WinError(ctypes.get_last_error())
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+class _FILETIME(ctypes.Structure):
+    _fields_ = [
+        ("dwLowDateTime", ctypes.c_uint32),
+        ("dwHighDateTime", ctypes.c_uint32),
+    ]
+
+
+def _timestamp_to_filetime(timestamp: float | None) -> _FILETIME | None:
+    if timestamp is None:
+        return None
+
+    intervals = int((timestamp + 11644473600) * 10_000_000)
+    return _FILETIME(intervals & 0xFFFFFFFF, intervals >> 32)
