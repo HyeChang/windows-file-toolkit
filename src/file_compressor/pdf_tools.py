@@ -14,6 +14,20 @@ class PdfOperationResult:
     message: str = ""
 
 
+@dataclass(frozen=True)
+class PdfPagePlan:
+    source: Path
+    page_index: int
+    page_number: int
+    result_order: int
+    action: str
+    rotation: int = 0
+    output: Path | None = None
+
+
+PdfPageRef = PdfPagePlan
+
+
 def parse_page_selection(selection: str, *, total_pages: int) -> list[int]:
     pages: list[int] = []
     for token in selection.split(","):
@@ -34,6 +48,118 @@ def parse_page_selection(selection: str, *, total_pages: int) -> list[int]:
         if index < 0 or index >= total_pages:
             raise ValueError("Page selection is outside the PDF page range.")
     return pages
+
+
+def pdf_page_refs(source: Path) -> list[PdfPageRef]:
+    source = Path(source)
+    reader = PdfReader(str(source))
+    return [
+        PdfPagePlan(
+            source=source,
+            page_index=index,
+            page_number=index + 1,
+            result_order=index + 1,
+            action="include",
+        )
+        for index in range(len(reader.pages))
+    ]
+
+
+def default_merge_plan(sources: list[Path]) -> list[PdfPagePlan]:
+    plan: list[PdfPagePlan] = []
+    order = 1
+    for source in sources[:2]:
+        for page in pdf_page_refs(source):
+            plan.append(
+                PdfPagePlan(
+                    source=page.source,
+                    page_index=page.page_index,
+                    page_number=page.page_number,
+                    result_order=order,
+                    action="include",
+                    rotation=page.rotation,
+                    output=page.output,
+                )
+            )
+            order += 1
+    return plan
+
+
+def write_page_plan(plan: list[PdfPagePlan], output: Path) -> PdfOperationResult:
+    try:
+        output = _unique_output_path(Path(output))
+        writer = PdfWriter()
+        reader_cache: dict[Path, PdfReader] = {}
+        for row in plan:
+            if row.action in {"exclude", "delete"}:
+                continue
+            reader = reader_cache.setdefault(row.source, PdfReader(str(row.source)))
+            page = reader.pages[row.page_index]
+            if row.rotation:
+                page = page.rotate(row.rotation)
+            writer.add_page(page)
+        _write_pdf(writer, output)
+    except Exception as exc:
+        return PdfOperationResult(status="failed", output=None, message=str(exc))
+    return PdfOperationResult(status="completed", output=output)
+
+
+def build_single_pdf_plan(
+    source: Path,
+    operation: str,
+    selection: str,
+    output: Path,
+    *,
+    rotation: int = 0,
+) -> list[PdfPagePlan]:
+    source = Path(source)
+    output = Path(output)
+    reader = PdfReader(str(source))
+    total_pages = len(reader.pages)
+
+    if operation == "reorder":
+        selected = parse_page_selection(selection, total_pages=total_pages)
+        return [
+            PdfPagePlan(
+                source=source,
+                page_index=page_index,
+                page_number=page_index + 1,
+                result_order=index,
+                action="include",
+                output=output,
+            )
+            for index, page_index in enumerate(selected, start=1)
+        ]
+
+    selected = set(parse_page_selection(selection, total_pages=total_pages)) if selection.strip() else set()
+    plan: list[PdfPagePlan] = []
+    for page_index in range(total_pages):
+        action = "include"
+        row_rotation = 0
+        row_output = output
+        if operation == "extract":
+            action = "include" if page_index in selected else "exclude"
+        elif operation == "delete":
+            action = "delete" if page_index in selected else "keep"
+        elif operation == "split":
+            action = "split"
+            row_output = output / f"{source.stem}_page_{page_index + 1:03d}.pdf"
+        elif operation == "rotate":
+            action = "rotate" if page_index in selected else "keep"
+            row_rotation = rotation if page_index in selected else 0
+
+        plan.append(
+            PdfPagePlan(
+                source=source,
+                page_index=page_index,
+                page_number=page_index + 1,
+                result_order=len(plan) + 1,
+                action=action,
+                rotation=row_rotation,
+                output=row_output,
+            )
+        )
+    return plan
 
 
 def merge_pdfs(sources: list[Path], output: Path) -> PdfOperationResult:
