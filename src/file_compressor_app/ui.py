@@ -23,6 +23,11 @@ from file_compressor.dependencies import GHOSTSCRIPT_DOWNLOAD_URL, detect_ghosts
 from file_compressor.discovery import discover_supported_files
 from file_compressor.engine import compress_file
 from file_compressor.models import CompressionJob, CompressionOptions, JobStatus
+from file_compressor.compressors.windows_automation import (
+    default_excel_available,
+    default_hancom_available,
+    default_powerpoint_available,
+)
 from file_compressor.planning import (
     folder_batch_output_root,
     planned_batch_output_path,
@@ -40,8 +45,18 @@ TRANSLATIONS = {
         "select_output_folder": "출력 폴더 선택",
         "output_folder_default": "출력 폴더: 기본 위치",
         "output_folder_selected": "출력 폴더: {path}",
+        "remove_selected": "선택 삭제",
+        "clear_list": "목록 비우기",
         "start_compression": "압축 시작",
         "settings": "고급 설정",
+        "diagnostics": "환경 진단",
+        "recheck_diagnostics": "다시 확인",
+        "available": "사용 가능",
+        "missing": "설치 필요",
+        "diagnostic_pdf": "PDF(Ghostscript): {status}",
+        "diagnostic_excel": "Excel(.xls): {status}",
+        "diagnostic_powerpoint": "PowerPoint(.ppt): {status}",
+        "diagnostic_hwp": "한글(.hwp): {status}",
         "tools": "도구",
         "install_ghostscript": "Ghostscript 설치",
         "pdf_tool_available": "PDF 압축 도구: 사용 가능",
@@ -83,8 +98,18 @@ TRANSLATIONS = {
         "select_output_folder": "Select output folder",
         "output_folder_default": "Output folder: default location",
         "output_folder_selected": "Output folder: {path}",
+        "remove_selected": "Remove selected",
+        "clear_list": "Clear list",
         "start_compression": "Start compression",
         "settings": "Advanced settings",
+        "diagnostics": "Environment",
+        "recheck_diagnostics": "Recheck",
+        "available": "Available",
+        "missing": "Missing",
+        "diagnostic_pdf": "PDF(Ghostscript): {status}",
+        "diagnostic_excel": "Excel(.xls): {status}",
+        "diagnostic_powerpoint": "PowerPoint(.ppt): {status}",
+        "diagnostic_hwp": "Hangul(.hwp): {status}",
         "tools": "Tools",
         "install_ghostscript": "Install Ghostscript",
         "pdf_tool_available": "PDF compression tool: available",
@@ -154,6 +179,9 @@ class MainWindow(QMainWindow):
         self.resize(980, 560)
         self.jobs: list[FileJob] = []
         self.ghostscript_status = detect_ghostscript()
+        self.excel_available = default_excel_available()
+        self.powerpoint_available = default_powerpoint_available()
+        self.hancom_available = default_hancom_available()
         self._cancel_requested = False
         self._current_file_name: str | None = None
         self.output_folder: Path | None = None
@@ -164,6 +192,8 @@ class MainWindow(QMainWindow):
         self.add_folder_button = QPushButton()
         self.output_folder_button = QPushButton()
         self.output_folder_label = QLabel()
+        self.remove_selected_button = QPushButton()
+        self.clear_list_button = QPushButton()
         self.start_button = QPushButton()
         self.cancel_button = QPushButton()
         self.progress_bar = QProgressBar()
@@ -171,6 +201,13 @@ class MainWindow(QMainWindow):
         self.summary_label = QLabel()
         self.pdf_tool_status_label = QLabel()
         self.ghostscript_install_button = QPushButton()
+        self.recheck_diagnostics_button = QPushButton()
+        self.diagnostic_labels = {
+            "pdf": QLabel(),
+            "excel": QLabel(),
+            "powerpoint": QLabel(),
+            "hwp": QLabel(),
+        }
         self.language_label = QLabel()
         self.image_size_label = QLabel()
         self.jpeg_quality_label = QLabel()
@@ -187,9 +224,12 @@ class MainWindow(QMainWindow):
         self.add_button.clicked.connect(self.pick_files)
         self.add_folder_button.clicked.connect(self.pick_folder)
         self.output_folder_button.clicked.connect(self.pick_output_folder)
+        self.remove_selected_button.clicked.connect(self.remove_selected_jobs)
+        self.clear_list_button.clicked.connect(self.clear_jobs)
         self.start_button.clicked.connect(self.compress_jobs)
         self.cancel_button.clicked.connect(self.cancel_compression)
         self.ghostscript_install_button.clicked.connect(self.open_ghostscript_download)
+        self.recheck_diagnostics_button.clicked.connect(self.refresh_diagnostics)
         self.language_combo.currentIndexChanged.connect(self.change_language)
         self.cancel_button.setEnabled(False)
         self.progress_bar.setRange(0, 1)
@@ -200,6 +240,8 @@ class MainWindow(QMainWindow):
         actions.addWidget(self.add_folder_button)
         actions.addWidget(self.output_folder_button)
         actions.addWidget(self.output_folder_label)
+        actions.addWidget(self.remove_selected_button)
+        actions.addWidget(self.clear_list_button)
         actions.addWidget(self.start_button)
         actions.addWidget(self.cancel_button)
         actions.addStretch()
@@ -219,9 +261,20 @@ class MainWindow(QMainWindow):
         settings_layout.addStretch()
         self.settings_group.setLayout(settings_layout)
 
+        self.diagnostics_group = QGroupBox()
+        diagnostics_layout = QHBoxLayout()
+        diagnostics_layout.addWidget(self.diagnostic_labels["pdf"])
+        diagnostics_layout.addWidget(self.diagnostic_labels["excel"])
+        diagnostics_layout.addWidget(self.diagnostic_labels["powerpoint"])
+        diagnostics_layout.addWidget(self.diagnostic_labels["hwp"])
+        diagnostics_layout.addWidget(self.recheck_diagnostics_button)
+        diagnostics_layout.addStretch()
+        self.diagnostics_group.setLayout(diagnostics_layout)
+
         layout = QVBoxLayout()
         layout.addLayout(actions)
         layout.addWidget(self.settings_group)
+        layout.addWidget(self.diagnostics_group)
         progress_layout = QHBoxLayout()
         progress_layout.addWidget(self.progress_bar)
         progress_layout.addWidget(self.current_file_label)
@@ -295,11 +348,15 @@ class MainWindow(QMainWindow):
         self.add_button.setText(str(self.tr("add_files")))
         self.add_folder_button.setText(str(self.tr("add_folder")))
         self.output_folder_button.setText(str(self.tr("select_output_folder_button")))
+        self.remove_selected_button.setText(str(self.tr("remove_selected")))
+        self.clear_list_button.setText(str(self.tr("clear_list")))
         self.start_button.setText(str(self.tr("start_compression")))
         self.cancel_button.setText(str(self.tr("cancel")))
         self.tools_menu.setTitle(str(self.tr("tools")))
         self.ghostscript_install_action.setText(str(self.tr("install_ghostscript")))
         self.settings_group.setTitle(str(self.tr("settings")))
+        self.diagnostics_group.setTitle(str(self.tr("diagnostics")))
+        self.recheck_diagnostics_button.setText(str(self.tr("recheck_diagnostics")))
         self.language_label.setText(str(self.tr("language")))
         self.image_size_label.setText(str(self.tr("image_size")))
         self.jpeg_quality_label.setText(str(self.tr("jpeg_quality")))
@@ -311,6 +368,7 @@ class MainWindow(QMainWindow):
         self._set_pdf_preset_items(selected_pdf_preset)
         self._refresh_output_folder_label()
         self._refresh_pdf_tool_status()
+        self._refresh_diagnostic_labels()
         self._refresh_current_file_label()
         self._refresh_summary()
         self._refresh_status_label()
@@ -329,6 +387,32 @@ class MainWindow(QMainWindow):
 
     def open_ghostscript_download(self):
         QDesktopServices.openUrl(QUrl(GHOSTSCRIPT_DOWNLOAD_URL))
+
+    def refresh_diagnostics(self):
+        self.ghostscript_status = detect_ghostscript()
+        self.excel_available = default_excel_available()
+        self.powerpoint_available = default_powerpoint_available()
+        self.hancom_available = default_hancom_available()
+        self._refresh_pdf_tool_status()
+        self._refresh_diagnostic_labels()
+
+    def _refresh_diagnostic_labels(self):
+        self.diagnostic_labels["pdf"].setText(
+            self._diagnostic_text("diagnostic_pdf", self.ghostscript_status.available)
+        )
+        self.diagnostic_labels["excel"].setText(
+            self._diagnostic_text("diagnostic_excel", self.excel_available)
+        )
+        self.diagnostic_labels["powerpoint"].setText(
+            self._diagnostic_text("diagnostic_powerpoint", self.powerpoint_available)
+        )
+        self.diagnostic_labels["hwp"].setText(
+            self._diagnostic_text("diagnostic_hwp", self.hancom_available)
+        )
+
+    def _diagnostic_text(self, key: str, available: bool) -> str:
+        status_key = "available" if available else "missing"
+        return str(self.tr(key)).format(status=self.tr(status_key))
 
     def _refresh_output_folder_label(self):
         if self.output_folder is None:
@@ -436,6 +520,31 @@ class MainWindow(QMainWindow):
         self.refresh_table()
         self._refresh_summary()
         self._set_status("ready_status", count=len(self.jobs))
+
+    def remove_selected_jobs(self):
+        selected_rows = sorted(
+            {index.row() for index in self.table.selectionModel().selectedRows()},
+            reverse=True,
+        )
+        for row in selected_rows:
+            if 0 <= row < len(self.jobs):
+                del self.jobs[row]
+        self.refresh_table()
+        self._refresh_summary()
+        self._set_status_for_job_count()
+
+    def clear_jobs(self):
+        self.jobs.clear()
+        self.progress_bar.setValue(0)
+        self.refresh_table()
+        self._refresh_summary()
+        self._set_status("initial_status")
+
+    def _set_status_for_job_count(self):
+        if self.jobs:
+            self._set_status("ready_status", count=len(self.jobs))
+        else:
+            self._set_status("initial_status")
 
     def _append_folder_jobs(self, folder: Path):
         batch_root = self.output_folder or folder_batch_output_root(folder)

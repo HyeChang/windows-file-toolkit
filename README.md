@@ -37,6 +37,10 @@ Use `출력 폴더 선택` / `Select output folder` to collect compressed files 
 - Folder batches keep their relative subfolder structure under the chosen folder.
 - Pending jobs are replanned when the output folder is selected after files have already been added.
 
+## List Management
+
+Use `선택 삭제` / `Remove selected` to remove selected rows from the queue, or `목록 비우기` / `Clear list` to reset the queue before starting compression.
+
 ## Progress and Results
 
 The app shows overall progress, the current file being processed, and a cancel button while compression is running. Cancel stops before the next file starts; the file already being processed is allowed to finish safely.
@@ -55,11 +59,12 @@ Defaults are `1600 px`, JPEG quality `78`, and PDF level `Screen`.
 
 ## PDF Compression Tool
 
-PDF compression uses Ghostscript. The app checks for Ghostscript on startup and shows the PDF tool status in the settings area.
+PDF compression uses Ghostscript. The app checks for Ghostscript on startup and shows the PDF tool status in the settings area. The environment diagnostics panel also checks Ghostscript, Microsoft Excel, Microsoft PowerPoint, and Hancom Office availability.
 
 - If Ghostscript is available, PDF compression runs normally.
 - If Ghostscript is missing, PDF files are skipped and the original files are preserved.
 - Use the `설치` / `Install` button or `도구` / `Tools` menu to open the official Ghostscript download page.
+- Use `다시 확인` / `Recheck` after installing supporting software to refresh the diagnostics without restarting the app.
 
 ## Language
 

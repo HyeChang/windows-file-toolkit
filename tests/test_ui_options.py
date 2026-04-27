@@ -79,6 +79,9 @@ def test_window_defaults_to_korean_language(monkeypatch):
         "file_compressor_app.ui.detect_ghostscript",
         lambda: DependencyStatus(False),
     )
+    monkeypatch.setattr("file_compressor_app.ui.default_excel_available", lambda: False)
+    monkeypatch.setattr("file_compressor_app.ui.default_powerpoint_available", lambda: False)
+    monkeypatch.setattr("file_compressor_app.ui.default_hancom_available", lambda: False)
     app()
     window = MainWindow()
 
@@ -88,8 +91,12 @@ def test_window_defaults_to_korean_language(monkeypatch):
     assert window.add_folder_button.text() == "폴더 추가"
     assert window.output_folder_button.text() == "출력 폴더 선택"
     assert window.output_folder_label.text() == "출력 폴더: 기본 위치"
+    assert window.remove_selected_button.text() == "선택 삭제"
+    assert window.clear_list_button.text() == "목록 비우기"
     assert window.start_button.text() == "압축 시작"
     assert window.settings_group.title() == "고급 설정"
+    assert window.diagnostics_group.title() == "환경 진단"
+    assert window.recheck_diagnostics_button.text() == "다시 확인"
     assert window.language_label.text() == "언어"
     assert window.image_size_label.text() == "이미지 크기"
     assert window.jpeg_quality_label.text() == "JPEG 품질"
@@ -115,6 +122,9 @@ def test_window_switches_visible_text_to_english(monkeypatch):
         "file_compressor_app.ui.detect_ghostscript",
         lambda: DependencyStatus(False),
     )
+    monkeypatch.setattr("file_compressor_app.ui.default_excel_available", lambda: False)
+    monkeypatch.setattr("file_compressor_app.ui.default_powerpoint_available", lambda: False)
+    monkeypatch.setattr("file_compressor_app.ui.default_hancom_available", lambda: False)
     app()
     window = MainWindow()
 
@@ -125,8 +135,12 @@ def test_window_switches_visible_text_to_english(monkeypatch):
     assert window.add_folder_button.text() == "Add folder"
     assert window.output_folder_button.text() == "Select output folder"
     assert window.output_folder_label.text() == "Output folder: default location"
+    assert window.remove_selected_button.text() == "Remove selected"
+    assert window.clear_list_button.text() == "Clear list"
     assert window.start_button.text() == "Start compression"
     assert window.settings_group.title() == "Advanced settings"
+    assert window.diagnostics_group.title() == "Environment"
+    assert window.recheck_diagnostics_button.text() == "Recheck"
     assert window.language_label.text() == "Language"
     assert window.image_size_label.text() == "Image size"
     assert window.jpeg_quality_label.text() == "JPEG quality"
@@ -175,6 +189,55 @@ def test_pdf_tool_status_shows_available_when_ghostscript_exists(monkeypatch):
     assert window.pdf_tool_status_label.text() == "PDF 압축 도구: 사용 가능"
     assert window.ghostscript_install_button.text() == "설치됨"
     assert window.ghostscript_install_button.isEnabled() is False
+
+
+def test_environment_diagnostics_show_dependency_statuses(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    monkeypatch.setattr(
+        "file_compressor_app.ui.detect_ghostscript",
+        lambda: DependencyStatus(False),
+    )
+    monkeypatch.setattr("file_compressor_app.ui.default_excel_available", lambda: True)
+    monkeypatch.setattr("file_compressor_app.ui.default_powerpoint_available", lambda: False)
+    monkeypatch.setattr("file_compressor_app.ui.default_hancom_available", lambda: True)
+    app()
+    window = MainWindow()
+
+    assert window.diagnostic_labels["pdf"].text() == "PDF(Ghostscript): 설치 필요"
+    assert window.diagnostic_labels["excel"].text() == "Excel(.xls): 사용 가능"
+    assert window.diagnostic_labels["powerpoint"].text() == "PowerPoint(.ppt): 설치 필요"
+    assert window.diagnostic_labels["hwp"].text() == "한글(.hwp): 사용 가능"
+
+
+def test_recheck_diagnostics_refreshes_dependency_statuses(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    statuses = {
+        "ghostscript": DependencyStatus(False),
+        "excel": False,
+        "powerpoint": False,
+        "hwp": False,
+    }
+    monkeypatch.setattr("file_compressor_app.ui.detect_ghostscript", lambda: statuses["ghostscript"])
+    monkeypatch.setattr("file_compressor_app.ui.default_excel_available", lambda: statuses["excel"])
+    monkeypatch.setattr("file_compressor_app.ui.default_powerpoint_available", lambda: statuses["powerpoint"])
+    monkeypatch.setattr("file_compressor_app.ui.default_hancom_available", lambda: statuses["hwp"])
+    app()
+    window = MainWindow()
+
+    statuses.update(
+        {
+            "ghostscript": DependencyStatus(True, "gs"),
+            "excel": True,
+            "powerpoint": True,
+            "hwp": True,
+        }
+    )
+    window.recheck_diagnostics_button.click()
+
+    assert window.diagnostic_labels["pdf"].text() == "PDF(Ghostscript): 사용 가능"
+    assert window.diagnostic_labels["excel"].text() == "Excel(.xls): 사용 가능"
+    assert window.diagnostic_labels["powerpoint"].text() == "PowerPoint(.ppt): 사용 가능"
+    assert window.diagnostic_labels["hwp"].text() == "한글(.hwp): 사용 가능"
 
 
 def test_ghostscript_install_controls_open_download_page(monkeypatch):
@@ -303,6 +366,46 @@ def test_output_folder_replans_pending_jobs(monkeypatch):
     window.set_output_folder(output_root)
 
     assert window.jobs[0].output_path == output_root / "report_compressed.pdf"
+
+
+def test_remove_selected_jobs_updates_table_and_summary(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    app()
+    window = MainWindow()
+    first = Path(".worktrees/file-compressor-impl/.test-output/ui-remove/first.pdf")
+    second = Path(".worktrees/file-compressor-impl/.test-output/ui-remove/second.pdf")
+    first.parent.mkdir(parents=True, exist_ok=True)
+    first.write_bytes(b"pdf")
+    second.write_bytes(b"pdf")
+    window.add_files([first, second])
+
+    window.table.selectRow(0)
+    window.remove_selected_jobs()
+
+    assert len(window.jobs) == 1
+    assert window.jobs[0].path == second
+    assert window.table.rowCount() == 1
+    assert window.status_label.text() == "1개 파일 준비됨."
+
+
+def test_clear_jobs_resets_list_and_progress(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    app()
+    window = MainWindow()
+    source = Path(".worktrees/file-compressor-impl/.test-output/ui-clear/report.pdf")
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_bytes(b"pdf")
+    window.add_files([source])
+    window.progress_bar.setRange(0, 1)
+    window.progress_bar.setValue(1)
+
+    window.clear_jobs()
+
+    assert window.jobs == []
+    assert window.table.rowCount() == 0
+    assert window.progress_bar.value() == 0
+    assert window.summary_label.text() == "요약: 완료 0, 건너뜀 0, 실패 0, 총 절감 - (-)"
+    assert window.status_label.text() == "파일을 추가하세요."
 
 
 def test_compress_jobs_updates_progress_and_summary(monkeypatch):
