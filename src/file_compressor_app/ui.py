@@ -34,7 +34,7 @@ from file_compressor.planning import (
     planned_batch_output_path,
     planned_output_folder_path,
 )
-from file_compressor_app.file_tools_ui import ClassifyToolWidget, RenameToolWidget
+from file_compressor_app.file_tools_ui import ClassifyToolWidget, DateChangeToolWidget, RenameToolWidget
 from file_compressor_app.view_model import FileJob, result_to_job, summarize_jobs
 
 
@@ -44,6 +44,7 @@ TRANSLATIONS = {
         "tab_compression": "문서 압축",
         "tab_rename": "파일 이름 변경",
         "tab_classify": "파일 자동 분류",
+        "tab_dates": "파일 날짜 변경",
         "add_files": "파일 추가",
         "add_folder": "폴더 추가",
         "select_output_folder_button": "출력 폴더 선택",
@@ -100,6 +101,7 @@ TRANSLATIONS = {
         "tab_compression": "Compression",
         "tab_rename": "Rename",
         "tab_classify": "Classify",
+        "tab_dates": "Dates",
         "add_files": "Add files",
         "add_folder": "Add folder",
         "select_output_folder_button": "Select output folder",
@@ -295,10 +297,12 @@ class MainWindow(QMainWindow):
         self.compression_tab.setLayout(layout)
         self.rename_tab = RenameToolWidget(language=self.language)
         self.classify_tab = ClassifyToolWidget(language=self.language)
+        self.date_tab = DateChangeToolWidget(language=self.language)
         self.tabs = QTabWidget()
         self.tabs.addTab(self.compression_tab, "")
         self.tabs.addTab(self.rename_tab, "")
         self.tabs.addTab(self.classify_tab, "")
+        self.tabs.addTab(self.date_tab, "")
         self.setCentralWidget(self.tabs)
         self.apply_language()
 
@@ -362,8 +366,10 @@ class MainWindow(QMainWindow):
         self.tabs.setTabText(0, str(self.tr("tab_compression")))
         self.tabs.setTabText(1, str(self.tr("tab_rename")))
         self.tabs.setTabText(2, str(self.tr("tab_classify")))
+        self.tabs.setTabText(3, str(self.tr("tab_dates")))
         self.rename_tab.set_language(self.language)
         self.classify_tab.set_language(self.language)
+        self.date_tab.set_language(self.language)
         self.add_button.setText(str(self.tr("add_files")))
         self.add_folder_button.setText(str(self.tr("add_folder")))
         self.output_folder_button.setText(str(self.tr("select_output_folder_button")))

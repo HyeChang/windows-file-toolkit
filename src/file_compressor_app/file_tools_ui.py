@@ -3,10 +3,12 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
+from PySide6.QtCore import QDateTime
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QComboBox,
+    QDateTimeEdit,
     QFormLayout,
     QFileDialog,
     QGridLayout,
@@ -24,14 +26,18 @@ from PySide6.QtWidgets import (
 
 from file_compressor.file_tools import (
     ClassificationPlan,
+    DateChangePlan,
     RenameOptions,
     RenamePlan,
     apply_classification_plan,
+    apply_date_change_plan,
     apply_rename_plan,
     build_classification_plan,
+    build_date_change_plan,
     build_rename_plan,
     get_file_timestamps,
     undo_classification_results,
+    undo_date_change_results,
     undo_rename_results,
 )
 
@@ -58,9 +64,19 @@ TRANSLATIONS = {
         "number_files": "번호 붙이기",
         "number_start": "시작 번호",
         "date_format": "날짜 형식",
+        "date_change_options": "날짜 변경 옵션",
+        "date_source": "날짜 기준",
+        "manual": "직접 입력",
+        "filename": "파일명 날짜",
+        "now": "현재 시간",
+        "change_created": "생성일 변경",
+        "change_modified": "수정일 변경",
+        "created_input": "생성일",
+        "modified_input": "수정일",
         "preserve_modified_time": "수정일 유지",
         "rename_headers": ["원본", "변경 후", "상태", "위치"],
         "classify_headers": ["파일", "분류", "이동 위치", "상태"],
+        "date_headers": ["파일", "생성일", "수정일", "상태", "위치"],
         "select_output_folder_button": "출력 폴더 선택",
         "select_output_folder": "출력 폴더 선택",
         "output_folder_missing": "출력 폴더: 선택 필요",
@@ -108,9 +124,19 @@ TRANSLATIONS = {
         "number_files": "Number files",
         "number_start": "Start number",
         "date_format": "Date format",
+        "date_change_options": "Date change options",
+        "date_source": "Date source",
+        "manual": "Manual",
+        "filename": "File name date",
+        "now": "Current time",
+        "change_created": "Change created",
+        "change_modified": "Change modified",
+        "created_input": "Created",
+        "modified_input": "Modified",
         "preserve_modified_time": "Preserve modified date",
         "rename_headers": ["Original", "New name", "Status", "Location"],
         "classify_headers": ["File", "Category", "Move to", "Status"],
+        "date_headers": ["File", "Created", "Modified", "Status", "Location"],
         "select_output_folder_button": "Select output folder",
         "select_output_folder": "Select output folder",
         "output_folder_missing": "Output folder: required",
@@ -691,6 +717,245 @@ class ClassifyToolWidget(QWidget):
             self.detail_panel.set_file(
                 plan.source,
                 planned_path=plan.target,
+                status=self.status_text(plan.status),
+            )
+            return
+        self.detail_panel.set_file(self.paths[row])
+
+    def _selected_row(self) -> int | None:
+        selected = self.table.selectionModel().selectedRows()
+        if not selected:
+            return None
+        row = selected[0].row()
+        row_count = len(self.plans) if self.plans else len(self.paths)
+        if 0 <= row < row_count:
+            return row
+        return None
+
+
+class DateChangeToolWidget(QWidget):
+    def __init__(self, language: str = "ko"):
+        super().__init__()
+        self.language = language
+        self.paths: list[Path] = []
+        self.plans: list[DateChangePlan] = []
+        self.last_results: list[DateChangePlan] = []
+
+        self.add_files_button = QPushButton()
+        self.add_folder_button = QPushButton()
+        self.remove_selected_button = QPushButton()
+        self.clear_list_button = QPushButton()
+        self.preview_button = QPushButton()
+        self.apply_button = QPushButton()
+        self.undo_button = QPushButton()
+        self.options_group = QGroupBox()
+        self.source_mode_label = QLabel()
+        self.source_mode_combo = QComboBox()
+        self.change_created_checkbox = QCheckBox()
+        self.change_modified_checkbox = QCheckBox()
+        self.created_input_label = QLabel()
+        self.modified_input_label = QLabel()
+        self.created_datetime_edit = QDateTimeEdit()
+        self.modified_datetime_edit = QDateTimeEdit()
+        self.table = FileToolTable(5, self.add_paths)
+        self.detail_panel = FileDetailPanel(language)
+
+        for editor in (self.created_datetime_edit, self.modified_datetime_edit):
+            editor.setDisplayFormat("yyyy-MM-dd HH:mm:ss")
+            editor.setCalendarPopup(True)
+            editor.setDateTime(QDateTime.currentDateTime())
+        self.change_created_checkbox.setChecked(True)
+        self.change_modified_checkbox.setChecked(True)
+        self.undo_button.setEnabled(False)
+
+        self.add_files_button.clicked.connect(self.pick_files)
+        self.add_folder_button.clicked.connect(self.pick_folder)
+        self.remove_selected_button.clicked.connect(self.remove_selected_paths)
+        self.clear_list_button.clicked.connect(self.clear_paths)
+        self.preview_button.clicked.connect(self.preview_changes)
+        self.apply_button.clicked.connect(self.apply_changes)
+        self.undo_button.clicked.connect(self.undo_last_action)
+        self.table.itemSelectionChanged.connect(self.refresh_detail_panel)
+
+        actions = QHBoxLayout()
+        actions.addWidget(self.add_files_button)
+        actions.addWidget(self.add_folder_button)
+        actions.addWidget(self.remove_selected_button)
+        actions.addWidget(self.clear_list_button)
+        actions.addStretch()
+        actions.addWidget(self.preview_button)
+        actions.addWidget(self.apply_button)
+        actions.addWidget(self.undo_button)
+
+        options_layout = QGridLayout()
+        options_layout.addWidget(self.source_mode_label, 0, 0)
+        options_layout.addWidget(self.source_mode_combo, 0, 1)
+        options_layout.addWidget(self.change_created_checkbox, 0, 2)
+        options_layout.addWidget(self.change_modified_checkbox, 0, 3)
+        options_layout.addWidget(self.created_input_label, 1, 0)
+        options_layout.addWidget(self.created_datetime_edit, 1, 1)
+        options_layout.addWidget(self.modified_input_label, 1, 2)
+        options_layout.addWidget(self.modified_datetime_edit, 1, 3)
+        self.options_group.setLayout(options_layout)
+
+        content_layout = QHBoxLayout()
+        content_layout.addWidget(self.table, 3)
+        content_layout.addWidget(self.detail_panel, 1)
+
+        layout = QVBoxLayout()
+        layout.addLayout(actions)
+        layout.addWidget(self.options_group)
+        layout.addLayout(content_layout)
+        self.setLayout(layout)
+        self.set_language(language)
+
+    def tr(self, key: str) -> str | list[str]:
+        return TRANSLATIONS[self.language][key]
+
+    def set_language(self, language: str):
+        self.language = language
+        selected_mode = self.source_mode_combo.currentData() or "manual"
+        self.add_files_button.setText(str(self.tr("add_files")))
+        self.add_folder_button.setText(str(self.tr("add_folder")))
+        self.remove_selected_button.setText(str(self.tr("remove_selected")))
+        self.clear_list_button.setText(str(self.tr("clear_list")))
+        self.preview_button.setText(str(self.tr("preview")))
+        self.apply_button.setText(str(self.tr("apply")))
+        self.undo_button.setText(str(self.tr("undo")))
+        self.options_group.setTitle(str(self.tr("date_change_options")))
+        self.source_mode_label.setText(str(self.tr("date_source")))
+        self.change_created_checkbox.setText(str(self.tr("change_created")))
+        self.change_modified_checkbox.setText(str(self.tr("change_modified")))
+        self.created_input_label.setText(str(self.tr("created_input")))
+        self.modified_input_label.setText(str(self.tr("modified_input")))
+        self.table.setHorizontalHeaderLabels(self.tr("date_headers"))
+        self.detail_panel.set_language(language)
+        self._set_source_mode_items(selected_mode)
+        self.refresh_table()
+        self.refresh_detail_panel()
+
+    def _set_source_mode_items(self, selected: str):
+        self.source_mode_combo.blockSignals(True)
+        self.source_mode_combo.clear()
+        for key in ("manual", "filename", "now"):
+            self.source_mode_combo.addItem(str(self.tr(key)), key)
+        self.source_mode_combo.blockSignals(False)
+        self.source_mode_combo.setCurrentIndex(self.source_mode_combo.findData(selected))
+
+    def pick_files(self):
+        files, _ = QFileDialog.getOpenFileNames(
+            self,
+            str(self.tr("select_files")),
+            "",
+            str(self.tr("all_files_filter")),
+        )
+        self.add_paths([Path(file) for file in files])
+
+    def pick_folder(self):
+        folder = QFileDialog.getExistingDirectory(self, str(self.tr("select_folder")), "")
+        if folder:
+            self.add_paths([Path(folder)])
+
+    def add_paths(self, paths: list[Path]):
+        known = set(self.paths)
+        for path in _expand_files(paths):
+            if path not in known:
+                self.paths.append(path)
+                known.add(path)
+        self.plans = []
+        self.refresh_table()
+        self.refresh_detail_panel()
+
+    def remove_selected_paths(self):
+        selected_rows = sorted(
+            {index.row() for index in self.table.selectionModel().selectedRows()},
+            reverse=True,
+        )
+        for row in selected_rows:
+            if 0 <= row < len(self.paths):
+                del self.paths[row]
+        self.plans = []
+        self.refresh_table()
+        self.refresh_detail_panel()
+
+    def clear_paths(self):
+        self.paths.clear()
+        self.plans.clear()
+        self.refresh_table()
+        self.refresh_detail_panel()
+
+    def set_manual_timestamps(self, created: float, modified: float):
+        self.source_mode_combo.setCurrentIndex(self.source_mode_combo.findData("manual"))
+        self.created_datetime_edit.setDateTime(QDateTime.fromSecsSinceEpoch(int(created)))
+        self.modified_datetime_edit.setDateTime(QDateTime.fromSecsSinceEpoch(int(modified)))
+
+    def preview_changes(self):
+        mode = self.source_mode_combo.currentData() or "manual"
+        self.plans = build_date_change_plan(
+            self.paths,
+            created_timestamp=self.created_datetime_edit.dateTime().toSecsSinceEpoch(),
+            modified_timestamp=self.modified_datetime_edit.dateTime().toSecsSinceEpoch(),
+            from_filename=mode == "filename",
+            use_now=mode == "now",
+            change_created=self.change_created_checkbox.isChecked(),
+            change_modified=self.change_modified_checkbox.isChecked(),
+        )
+        self.refresh_table()
+        self.refresh_detail_panel()
+
+    def apply_changes(self):
+        if not self.plans:
+            self.preview_changes()
+        self.plans = apply_date_change_plan(self.plans)
+        self.last_results = self.plans
+        self.undo_button.setEnabled(any(plan.status == "completed" for plan in self.last_results))
+        self.refresh_table()
+        self.refresh_detail_panel()
+
+    def undo_last_action(self):
+        self.plans = undo_date_change_results(self.last_results)
+        self.undo_button.setEnabled(False)
+        self.refresh_table()
+        self.refresh_detail_panel()
+
+    def refresh_table(self):
+        row_count = len(self.plans) if self.plans else len(self.paths)
+        self.table.setRowCount(row_count)
+        if self.plans:
+            for row, plan in enumerate(self.plans):
+                self._set_row(
+                    row,
+                    [
+                        plan.source.name,
+                        _format_timestamp(plan.target_timestamps.created),
+                        _format_timestamp(plan.target_timestamps.modified),
+                        self.status_text(plan.status),
+                        str(plan.source.parent),
+                    ],
+                )
+        else:
+            for row, path in enumerate(self.paths):
+                self._set_row(row, [path.name, "", "", "", str(path.parent)])
+        self.table.resizeColumnsToContents()
+        self.refresh_detail_panel()
+
+    def status_text(self, status: str) -> str:
+        return str(TRANSLATIONS[self.language].get(status, status))
+
+    def _set_row(self, row: int, values: list[str]):
+        for column, value in enumerate(values):
+            self.table.setItem(row, column, QTableWidgetItem(value))
+
+    def refresh_detail_panel(self):
+        row = self._selected_row()
+        if row is None:
+            self.detail_panel.clear()
+            return
+        if self.plans:
+            plan = self.plans[row]
+            self.detail_panel.set_file(
+                plan.source,
+                planned_path=plan.source,
                 status=self.status_text(plan.status),
             )
             return
