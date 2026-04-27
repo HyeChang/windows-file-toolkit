@@ -112,10 +112,36 @@ TRANSLATIONS = {
 
 
 class FileToolTable(QTableWidget):
-    def __init__(self, columns: int):
+    def __init__(self, columns: int, on_files=None):
         super().__init__(0, columns)
+        self.on_files = on_files
+        self.setAcceptDrops(on_files is not None)
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+
+    def dragEnterEvent(self, event):
+        if self._has_local_urls(event):
+            event.acceptProposedAction()
+
+    def dragMoveEvent(self, event):
+        if self._has_local_urls(event):
+            event.acceptProposedAction()
+
+    def dropEvent(self, event):
+        if self.on_files is None or not self._has_local_urls(event):
+            return
+
+        paths = [
+            Path(url.toLocalFile())
+            for url in event.mimeData().urls()
+            if url.isLocalFile()
+        ]
+        self.on_files(paths)
+        event.acceptProposedAction()
+
+    def _has_local_urls(self, event) -> bool:
+        mime_data = event.mimeData()
+        return mime_data.hasUrls() and any(url.isLocalFile() for url in mime_data.urls())
 
 
 class RenameToolWidget(QWidget):
@@ -148,7 +174,7 @@ class RenameToolWidget(QWidget):
         self.date_format_label = QLabel()
         self.date_format_combo = QComboBox()
         self.preserve_modified_time_checkbox = QCheckBox()
-        self.table = FileToolTable(4)
+        self.table = FileToolTable(4, self.add_paths)
 
         self.number_start_spin.setRange(1, 999999)
         self.number_start_spin.setValue(1)
@@ -336,7 +362,7 @@ class ClassifyToolWidget(QWidget):
         self.clear_list_button = QPushButton()
         self.preview_button = QPushButton()
         self.apply_button = QPushButton()
-        self.table = FileToolTable(4)
+        self.table = FileToolTable(4, self.add_paths)
 
         self.add_files_button.clicked.connect(self.pick_files)
         self.add_folder_button.clicked.connect(self.pick_folder)

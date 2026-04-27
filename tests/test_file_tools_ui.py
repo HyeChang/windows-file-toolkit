@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 import shutil
 
+from PySide6.QtCore import QMimeData, QUrl
 from PySide6.QtWidgets import QApplication
 
 from file_compressor.dependencies import DependencyStatus
@@ -38,6 +39,19 @@ def make_window(monkeypatch) -> MainWindow:
 
 def tab_labels(window: MainWindow) -> list[str]:
     return [window.tabs.tabText(index) for index in range(window.tabs.count())]
+
+
+class FakeDropEvent:
+    def __init__(self, paths: list[Path]):
+        self._mime_data = QMimeData()
+        self._mime_data.setUrls([QUrl.fromLocalFile(str(path)) for path in paths])
+        self.accepted = False
+
+    def mimeData(self):
+        return self._mime_data
+
+    def acceptProposedAction(self):
+        self.accepted = True
 
 
 def test_main_window_separates_features_into_localized_tabs(monkeypatch):
@@ -110,3 +124,47 @@ def test_classify_tab_previews_category_targets(monkeypatch):
     assert window.classify_tab.table.item(0, 1).text() == "PDF"
     assert window.classify_tab.table.item(0, 2).text() == str(output_root / "PDF" / "보고서.pdf")
     assert window.classify_tab.table.item(1, 1).text() == "Excel"
+
+
+def test_rename_tab_accepts_dropped_files_and_folders(monkeypatch):
+    window = make_window(monkeypatch)
+    workdir = case_dir("ui-rename-drop")
+    source = workdir / "보고서.pdf"
+    nested = workdir / "folder" / "nested.xlsx"
+    nested.parent.mkdir()
+    source.write_bytes(b"pdf")
+    nested.write_bytes(b"xlsx")
+
+    event = FakeDropEvent([source, nested.parent])
+    assert window.rename_tab.table.acceptDrops() is True
+
+    window.rename_tab.table.dropEvent(event)
+
+    assert event.accepted is True
+    assert window.rename_tab.paths == [source, nested]
+    assert window.rename_tab.table.item(0, 0).text() == "보고서.pdf"
+    assert window.rename_tab.table.item(1, 0).text() == "nested.xlsx"
+
+
+def test_classify_tab_accepts_dropped_files_and_clears_preview(monkeypatch):
+    window = make_window(monkeypatch)
+    workdir = case_dir("ui-classify-drop")
+    output_root = workdir / "sorted"
+    first = workdir / "first.pdf"
+    second = workdir / "second.xlsx"
+    first.write_bytes(b"pdf")
+    second.write_bytes(b"xlsx")
+
+    window.classify_tab.set_output_folder(output_root)
+    window.classify_tab.add_paths([first])
+    window.classify_tab.preview_moves()
+    assert window.classify_tab.plans
+
+    event = FakeDropEvent([second])
+    assert window.classify_tab.table.acceptDrops() is True
+    window.classify_tab.table.dropEvent(event)
+
+    assert event.accepted is True
+    assert window.classify_tab.paths == [first, second]
+    assert window.classify_tab.plans == []
+    assert window.classify_tab.table.item(1, 0).text() == "second.xlsx"
