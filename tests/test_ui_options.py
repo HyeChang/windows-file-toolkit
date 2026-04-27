@@ -86,6 +86,8 @@ def test_window_defaults_to_korean_language(monkeypatch):
     assert window.windowTitle() == "파일 압축기"
     assert window.add_button.text() == "파일 추가"
     assert window.add_folder_button.text() == "폴더 추가"
+    assert window.output_folder_button.text() == "출력 폴더 선택"
+    assert window.output_folder_label.text() == "출력 폴더: 기본 위치"
     assert window.start_button.text() == "압축 시작"
     assert window.settings_group.title() == "고급 설정"
     assert window.language_label.text() == "언어"
@@ -121,6 +123,8 @@ def test_window_switches_visible_text_to_english(monkeypatch):
     assert window.windowTitle() == "File Compressor"
     assert window.add_button.text() == "Add files"
     assert window.add_folder_button.text() == "Add folder"
+    assert window.output_folder_button.text() == "Select output folder"
+    assert window.output_folder_label.text() == "Output folder: default location"
     assert window.start_button.text() == "Start compression"
     assert window.settings_group.title() == "Advanced settings"
     assert window.language_label.text() == "Language"
@@ -247,6 +251,58 @@ def test_compress_jobs_uses_folder_compression_jobs(monkeypatch):
     assert isinstance(calls[0][0], CompressionJob)
     assert calls[0][0].source == source
     assert calls[0][0].output == source_root.parent / "source_압축됨" / "report.xlsx"
+
+
+def test_output_folder_plans_single_file_outputs(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    app()
+    window = MainWindow()
+    output_root = Path(".worktrees/file-compressor-impl/.test-output/ui-output-folder/out")
+    output_root.mkdir(parents=True, exist_ok=True)
+    source = Path(".worktrees/file-compressor-impl/.test-output/ui-output-folder/source/report.pdf")
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_bytes(b"pdf")
+
+    window.set_output_folder(output_root)
+    window.add_files([source])
+
+    assert window.output_folder_label.text() == f"출력 폴더: {output_root}"
+    assert isinstance(window.jobs[0].compression_job, CompressionJob)
+    assert window.jobs[0].output_path == output_root / "report_compressed.pdf"
+    assert window.table.item(0, 7).text() == str(output_root / "report_compressed.pdf")
+
+
+def test_output_folder_preserves_folder_structure(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    app()
+    window = MainWindow()
+    output_root = Path(".worktrees/file-compressor-impl/.test-output/ui-output-folder-batch/out")
+    output_root.mkdir(parents=True, exist_ok=True)
+    source_root = Path(".worktrees/file-compressor-impl/.test-output/ui-output-folder-batch/source")
+    source = source_root / "nested" / "slides.ppt"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_bytes(b"ppt")
+
+    window.set_output_folder(output_root)
+    window.add_folder(source_root)
+
+    assert window.jobs[0].output_path == output_root / "nested" / "slides.pptx"
+
+
+def test_output_folder_replans_pending_jobs(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    app()
+    window = MainWindow()
+    source = Path(".worktrees/file-compressor-impl/.test-output/ui-output-folder-replan/report.pdf")
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_bytes(b"pdf")
+    output_root = source.parent / "out"
+    output_root.mkdir(exist_ok=True)
+    window.add_files([source])
+
+    window.set_output_folder(output_root)
+
+    assert window.jobs[0].output_path == output_root / "report_compressed.pdf"
 
 
 def test_compress_jobs_updates_progress_and_summary(monkeypatch):

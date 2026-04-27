@@ -22,8 +22,12 @@ from PySide6.QtWidgets import (
 from file_compressor.dependencies import GHOSTSCRIPT_DOWNLOAD_URL, detect_ghostscript
 from file_compressor.discovery import discover_supported_files
 from file_compressor.engine import compress_file
-from file_compressor.models import CompressionJob, CompressionOptions
-from file_compressor.planning import folder_batch_output_root, planned_batch_output_path
+from file_compressor.models import CompressionJob, CompressionOptions, JobStatus
+from file_compressor.planning import (
+    folder_batch_output_root,
+    planned_batch_output_path,
+    planned_output_folder_path,
+)
 from file_compressor_app.view_model import FileJob, result_to_job, summarize_jobs
 
 
@@ -32,6 +36,10 @@ TRANSLATIONS = {
         "window_title": "파일 압축기",
         "add_files": "파일 추가",
         "add_folder": "폴더 추가",
+        "select_output_folder_button": "출력 폴더 선택",
+        "select_output_folder": "출력 폴더 선택",
+        "output_folder_default": "출력 폴더: 기본 위치",
+        "output_folder_selected": "출력 폴더: {path}",
         "start_compression": "압축 시작",
         "settings": "고급 설정",
         "tools": "도구",
@@ -71,6 +79,10 @@ TRANSLATIONS = {
         "window_title": "File Compressor",
         "add_files": "Add files",
         "add_folder": "Add folder",
+        "select_output_folder_button": "Select output folder",
+        "select_output_folder": "Select output folder",
+        "output_folder_default": "Output folder: default location",
+        "output_folder_selected": "Output folder: {path}",
         "start_compression": "Start compression",
         "settings": "Advanced settings",
         "tools": "Tools",
@@ -144,11 +156,14 @@ class MainWindow(QMainWindow):
         self.ghostscript_status = detect_ghostscript()
         self._cancel_requested = False
         self._current_file_name: str | None = None
+        self.output_folder: Path | None = None
 
         self.table = DropTable(self.add_paths)
         self.status_label = QLabel()
         self.add_button = QPushButton()
         self.add_folder_button = QPushButton()
+        self.output_folder_button = QPushButton()
+        self.output_folder_label = QLabel()
         self.start_button = QPushButton()
         self.cancel_button = QPushButton()
         self.progress_bar = QProgressBar()
@@ -171,6 +186,7 @@ class MainWindow(QMainWindow):
 
         self.add_button.clicked.connect(self.pick_files)
         self.add_folder_button.clicked.connect(self.pick_folder)
+        self.output_folder_button.clicked.connect(self.pick_output_folder)
         self.start_button.clicked.connect(self.compress_jobs)
         self.cancel_button.clicked.connect(self.cancel_compression)
         self.ghostscript_install_button.clicked.connect(self.open_ghostscript_download)
@@ -182,6 +198,8 @@ class MainWindow(QMainWindow):
         actions = QHBoxLayout()
         actions.addWidget(self.add_button)
         actions.addWidget(self.add_folder_button)
+        actions.addWidget(self.output_folder_button)
+        actions.addWidget(self.output_folder_label)
         actions.addWidget(self.start_button)
         actions.addWidget(self.cancel_button)
         actions.addStretch()
@@ -276,6 +294,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(str(self.tr("window_title")))
         self.add_button.setText(str(self.tr("add_files")))
         self.add_folder_button.setText(str(self.tr("add_folder")))
+        self.output_folder_button.setText(str(self.tr("select_output_folder_button")))
         self.start_button.setText(str(self.tr("start_compression")))
         self.cancel_button.setText(str(self.tr("cancel")))
         self.tools_menu.setTitle(str(self.tr("tools")))
@@ -290,6 +309,7 @@ class MainWindow(QMainWindow):
         self._set_image_dimension_items(selected_dimension)
         self._set_jpeg_quality_items(selected_quality)
         self._set_pdf_preset_items(selected_pdf_preset)
+        self._refresh_output_folder_label()
         self._refresh_pdf_tool_status()
         self._refresh_current_file_label()
         self._refresh_summary()
@@ -309,6 +329,15 @@ class MainWindow(QMainWindow):
 
     def open_ghostscript_download(self):
         QDesktopServices.openUrl(QUrl(GHOSTSCRIPT_DOWNLOAD_URL))
+
+    def _refresh_output_folder_label(self):
+        if self.output_folder is None:
+            self.output_folder_label.setText(str(self.tr("output_folder_default")))
+            return
+
+        self.output_folder_label.setText(
+            str(self.tr("output_folder_selected")).format(path=self.output_folder)
+        )
 
     def _refresh_current_file_label(self):
         if self._current_file_name:
@@ -365,6 +394,22 @@ class MainWindow(QMainWindow):
         if folder:
             self.add_folder(Path(folder))
 
+    def pick_output_folder(self):
+        folder = QFileDialog.getExistingDirectory(
+            self,
+            str(self.tr("select_output_folder")),
+            "",
+        )
+        if folder:
+            self.set_output_folder(Path(folder))
+
+    def set_output_folder(self, folder: Path):
+        self.output_folder = folder
+        self._replan_pending_jobs_for_output_folder()
+        self._refresh_output_folder_label()
+        self.refresh_table()
+        self._refresh_summary()
+
     def add_files(self, paths: list[Path]):
         for path in paths:
             if path.is_file():
@@ -393,13 +438,17 @@ class MainWindow(QMainWindow):
         self._set_status("ready_status", count=len(self.jobs))
 
     def _append_folder_jobs(self, folder: Path):
-        batch_root = folder_batch_output_root(folder)
+        batch_root = self.output_folder or folder_batch_output_root(folder)
         for source in discover_supported_files(folder):
             output = planned_batch_output_path(source, folder, batch_root=batch_root)
             compression_job = CompressionJob(source=source, output=output, batch_root=batch_root)
             self._append_job(source, compression_job=compression_job)
 
     def _append_job(self, path: Path, compression_job: CompressionJob | None = None):
+        if self.output_folder is not None and compression_job is None:
+            output = planned_output_folder_path(path, self.output_folder)
+            compression_job = CompressionJob(source=path, output=output, batch_root=self.output_folder)
+
         size = path.stat().st_size
         output_path = compression_job.output if compression_job else None
         self.jobs.append(
@@ -410,6 +459,34 @@ class MainWindow(QMainWindow):
                 compression_job=compression_job,
             )
         )
+
+    def _replan_pending_jobs_for_output_folder(self):
+        if self.output_folder is None:
+            return
+
+        for index, job in enumerate(self.jobs):
+            if job.status != JobStatus.PENDING.value:
+                continue
+
+            compression_job = self._planned_job_in_output_folder(job)
+            self.jobs[index] = FileJob(
+                path=job.path,
+                status=job.status,
+                original_size=job.original_size,
+                compressed_size=job.compressed_size,
+                output_path=compression_job.output,
+                compression_job=compression_job,
+                message=job.message,
+            )
+
+    def _planned_job_in_output_folder(self, job: FileJob) -> CompressionJob:
+        if job.compression_job is not None and job.compression_job.batch_root is not None:
+            relative_path = job.compression_job.output.relative_to(job.compression_job.batch_root)
+            output = self.output_folder / relative_path
+        else:
+            output = planned_output_folder_path(job.path, self.output_folder)
+
+        return CompressionJob(source=job.path, output=output, batch_root=self.output_folder)
 
     def compress_jobs(self):
         total = len(self.jobs)

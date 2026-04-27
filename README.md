@@ -2,7 +2,7 @@
 
 Windows desktop app for reducing the size of Excel, PowerPoint, PDF, HWPX, HWP, and legacy Office files.
 
-The app preserves original files. Individual files are written next to the source file with `_compressed` in the file name. Folder batches are written under a newly planned sibling parent folder such as `원본폴더_압축됨`, preserving the original subfolder structure.
+The app preserves original files. Individual files are written next to the source file with `_compressed` in the file name. Folder batches are written under a newly planned sibling parent folder such as `원본폴더_압축됨`, preserving the original subfolder structure. If an output folder is selected, compressed results are written under that folder instead.
 
 ## Run from Source
 
@@ -28,6 +28,14 @@ Use `폴더 추가` / `Add folder` to add every supported document under a folde
 - If that folder already exists, the app plans `<folder>_압축됨_2`, `<folder>_압축됨_3`, and so on.
 - Subfolders are preserved under the new output parent.
 - Legacy `.xls` and `.ppt` files are converted to `.xlsx` and `.pptx` in the output batch.
+
+## Output Folder
+
+Use `출력 폴더 선택` / `Select output folder` to collect compressed files in a chosen location.
+
+- Individual files are saved in the chosen folder with `_compressed` in the file name.
+- Folder batches keep their relative subfolder structure under the chosen folder.
+- Pending jobs are replanned when the output folder is selected after files have already been added.
 
 ## Progress and Results
 

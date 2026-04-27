@@ -2,7 +2,11 @@ from pathlib import Path
 import shutil
 
 from file_compressor.models import CompressionJob
-from file_compressor.planning import folder_batch_output_root, plan_folder_job
+from file_compressor.planning import (
+    folder_batch_output_root,
+    plan_folder_job,
+    planned_output_folder_path,
+)
 
 
 def case_dir(name: str) -> Path:
@@ -82,3 +86,34 @@ def test_plan_folder_job_keeps_hwp_output_suffix():
     job = plan_folder_job(source_root / "draft.hwp", source_root)
 
     assert job.output == workdir / "docs_압축됨" / "draft.hwp"
+
+
+def test_planned_output_folder_path_uses_compressed_name_for_single_files():
+    workdir = case_dir("planning-output-folder-file")
+    output_root = workdir / "out"
+    source = workdir / "docs" / "report.pdf"
+
+    result = planned_output_folder_path(source, output_root)
+
+    assert result == output_root / "report_compressed.pdf"
+
+
+def test_planned_output_folder_path_converts_legacy_single_file_suffix():
+    workdir = case_dir("planning-output-folder-legacy-file")
+    output_root = workdir / "out"
+    source = workdir / "docs" / "budget.xls"
+
+    result = planned_output_folder_path(source, output_root)
+
+    assert result == output_root / "budget_compressed.xlsx"
+
+
+def test_planned_output_folder_path_preserves_folder_relative_path():
+    workdir = case_dir("planning-output-folder-relative")
+    source_root = workdir / "docs"
+    output_root = workdir / "out"
+    source = source_root / "nested" / "deck.ppt"
+
+    result = planned_output_folder_path(source, output_root, source_root=source_root)
+
+    assert result == output_root / "nested" / "deck.pptx"
