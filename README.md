@@ -1,8 +1,8 @@
 # File Compressor
 
-Windows desktop app for reducing the size of Excel, PowerPoint, PDF, HWPX, and conditionally supported HWP files.
+Windows desktop app for reducing the size of Excel, PowerPoint, PDF, HWPX, HWP, and legacy Office files.
 
-The app preserves original files and writes compressed copies next to the source file.
+The app preserves original files. Individual files are written next to the source file with `_compressed` in the file name. Folder batches are written under a newly planned sibling parent folder such as `원본폴더_압축됨`, preserving the original subfolder structure.
 
 ## Run from Source
 
@@ -19,6 +19,15 @@ powershell -ExecutionPolicy Bypass -File scripts/build_exe.ps1
 ```
 
 The executable is written to `dist/FileCompressor.exe`.
+
+## Folder Batches
+
+Use `폴더 추가` / `Add folder` to add every supported document under a folder recursively.
+
+- Outputs are grouped under a new sibling parent folder named `<folder>_압축됨`.
+- If that folder already exists, the app plans `<folder>_압축됨_2`, `<folder>_압축됨_3`, and so on.
+- Subfolders are preserved under the new output parent.
+- Legacy `.xls` and `.ppt` files are converted to `.xlsx` and `.pptx` in the output batch.
 
 ## Advanced Compression Settings
 
@@ -39,7 +48,8 @@ The app supports Korean and English. Korean is selected by default, and the lang
 - `.xlsx`, `.xlsm`, `.pptx`, `.pptm`: direct ZIP-package image optimization.
 - `.hwpx`: direct ZIP-package image optimization.
 - `.pdf`: Ghostscript required.
-- `.hwp`: recognized and reported as requiring Hancom Office; full automation compression is not implemented in this version.
-- `.xls`, `.ppt`: recognized and reported as requiring Microsoft Office; full automation compression is not implemented in this version.
+- `.hwp`: Hancom Office required; opened through Hancom automation and saved to the planned output path.
+- `.xls`: Microsoft Excel required; converted to `.xlsx`, then optimized.
+- `.ppt`: Microsoft PowerPoint required; converted to `.pptx`, then optimized.
 
-Original files are not overwritten. Compressed files are written next to the source file with `_compressed` in the file name.
+When required desktop applications are not installed, the affected file is skipped with a clear status message.
