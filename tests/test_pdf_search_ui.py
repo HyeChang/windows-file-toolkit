@@ -48,6 +48,13 @@ def select_rows(table, rows: list[int]):
         table.setCurrentCell(rows[-1], 0)
 
 
+def check_page_rows(table, rows: list[int]):
+    for row in range(table.rowCount()):
+        table.item(row, 0).setCheckState(Qt.CheckState.Unchecked)
+    for row in rows:
+        table.item(row, 0).setCheckState(Qt.CheckState.Checked)
+
+
 def make_window(monkeypatch, *, tesseract_available=False) -> MainWindow:
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     monkeypatch.setattr(
@@ -99,12 +106,13 @@ def test_pdf_tools_tab_extracts_selected_pages(monkeypatch):
         window.pdf_tools_tab.operation_combo.findData("extract")
     )
     window.pdf_tools_tab.preview_operation()
-    select_rows(window.pdf_tools_tab.page_plan_table, [1])
+    check_page_rows(window.pdf_tools_tab.page_plan_table, [1])
     window.pdf_tools_tab.apply_operation()
 
     assert output.exists()
     assert len(PdfReader(str(output)).pages) == 1
     assert page_widths(output) == [201]
+    assert window.pdf_tools_tab.page_plan_table.item(1, 0).checkState() == Qt.CheckState.Checked
     assert window.pdf_tools_tab.table.item(0, 3).text() == "완료"
     assert window.pdf_tools_tab.page_selection_edit.isHidden()
 
@@ -171,13 +179,14 @@ def test_pdf_delete_preview_shows_page_actions(monkeypatch):
         window.pdf_tools_tab.operation_combo.findData("delete")
     )
     window.pdf_tools_tab.preview_operation()
-    select_rows(window.pdf_tools_tab.page_plan_table, [1])
+    check_page_rows(window.pdf_tools_tab.page_plan_table, [1])
 
     assert window.pdf_tools_tab.page_plan_table.rowCount() == 3
     assert [
-        window.pdf_tools_tab.page_plan_table.item(row, 3).text()
+        window.pdf_tools_tab.page_plan_table.item(row, 4).text()
         for row in range(3)
     ] == ["유지", "삭제", "유지"]
+    assert window.pdf_tools_tab.page_plan_table.item(1, 0).checkState() == Qt.CheckState.Checked
     assert window.pdf_tools_tab.page_selection_edit.isHidden()
 
 
@@ -197,7 +206,7 @@ def test_pdf_split_preview_shows_output_for_each_page(monkeypatch):
 
     assert window.pdf_tools_tab.page_plan_table.rowCount() == 2
     assert [
-        Path(window.pdf_tools_tab.page_plan_table.item(row, 5).text()).name
+        Path(window.pdf_tools_tab.page_plan_table.item(row, 6).text()).name
         for row in range(2)
     ] == ["source_page_001.pdf", "source_page_002.pdf"]
 
@@ -221,7 +230,7 @@ def test_pdf_reorder_preview_shows_result_order_and_applies_it(monkeypatch):
     window.pdf_tools_tab.apply_operation()
 
     assert [
-        window.pdf_tools_tab.page_plan_table.item(row, 2).text()
+        window.pdf_tools_tab.page_plan_table.item(row, 3).text()
         for row in range(3)
     ] == ["3", "1", "2"]
     assert page_widths(output) == [202, 200, 201]
@@ -244,13 +253,14 @@ def test_pdf_rotate_preview_shows_selected_rotation(monkeypatch):
         window.pdf_tools_tab.rotation_combo.findData(90)
     )
     window.pdf_tools_tab.preview_operation()
-    select_rows(window.pdf_tools_tab.page_plan_table, [1])
+    check_page_rows(window.pdf_tools_tab.page_plan_table, [1])
 
     assert [
-        window.pdf_tools_tab.page_plan_table.item(row, 3).text()
+        window.pdf_tools_tab.page_plan_table.item(row, 4).text()
         for row in range(2)
     ] == ["유지", "회전"]
-    assert window.pdf_tools_tab.page_plan_table.item(1, 4).text() == "90"
+    assert window.pdf_tools_tab.page_plan_table.item(1, 5).text() == "90"
+    assert window.pdf_tools_tab.page_plan_table.item(1, 0).checkState() == Qt.CheckState.Checked
     assert window.pdf_tools_tab.page_selection_edit.isHidden()
 
 

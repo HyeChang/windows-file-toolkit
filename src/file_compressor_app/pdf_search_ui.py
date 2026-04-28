@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
-from PySide6.QtCore import QItemSelectionModel, Qt, QUrl
+from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -71,7 +71,7 @@ TRANSLATIONS = {
         "pdf_headers": ["파일", "작업", "출력", "상태"],
         "input_page_headers": ["파일", "페이지"],
         "merge_result_headers": ["순서", "파일", "페이지", "회전", "상태"],
-        "page_plan_headers": ["순서", "파일", "원본 페이지", "작업", "회전", "출력"],
+        "page_plan_headers": ["선택", "순서", "파일", "원본 페이지", "작업", "회전", "출력"],
         "select_all_pages": "전체 선택",
         "clear_page_selection": "선택 해제",
         "page_actions": {
@@ -132,7 +132,7 @@ TRANSLATIONS = {
         "pdf_headers": ["File", "Operation", "Output", "Status"],
         "input_page_headers": ["File", "Page"],
         "merge_result_headers": ["Order", "File", "Page", "Rotation", "Status"],
-        "page_plan_headers": ["Order", "File", "Source page", "Action", "Rotation", "Output"],
+        "page_plan_headers": ["Select", "Order", "File", "Source page", "Action", "Rotation", "Output"],
         "select_all_pages": "Select all",
         "clear_page_selection": "Clear",
         "page_actions": {
@@ -191,7 +191,7 @@ class PdfToolsWidget(QWidget):
         self.rotation_combo = QComboBox()
         self.table = FileToolTable(4, self.add_paths)
         self.page_plan_group = QGroupBox()
-        self.page_plan_table = FileToolTable(6)
+        self.page_plan_table = FileToolTable(7)
         self.page_select_all_button = QPushButton()
         self.page_clear_selection_button = QPushButton()
         self.page_move_up_button = QPushButton()
@@ -227,7 +227,7 @@ class PdfToolsWidget(QWidget):
         self.move_up_button.clicked.connect(self.move_merge_result_up)
         self.move_down_button.clicked.connect(self.move_merge_result_down)
         self.remove_result_button.clicked.connect(self.remove_selected_merge_result)
-        self.page_plan_table.itemSelectionChanged.connect(self.on_page_plan_selection_changed)
+        self.page_plan_table.itemChanged.connect(self.on_page_plan_item_changed)
         self.page_select_all_button.clicked.connect(self.select_all_page_rows)
         self.page_clear_selection_button.clicked.connect(self.clear_page_row_selection)
         self.page_move_up_button.clicked.connect(self.move_page_plan_up)
@@ -441,20 +441,23 @@ class PdfToolsWidget(QWidget):
         self._refresh_mode_visibility()
         self.refresh_table("ready")
 
-    def on_page_plan_selection_changed(self):
+    def on_page_plan_item_changed(self, item: QTableWidgetItem):
         if self._refreshing_page_plan:
             return
         operation = self.operation_combo.currentData()
-        if operation not in {"extract", "delete", "rotate"}:
+        if operation not in {"extract", "delete", "rotate"} or item.column() != 0:
             return
 
-        selected_rows = sorted({index.row() for index in self.page_plan_table.selectionModel().selectedRows()})
-        selected_pages: list[int] = []
-        for row in selected_rows:
-            item = self.page_plan_table.item(row, 2)
-            if item is not None:
-                selected_pages.append(int(item.text()))
-        self.selected_page_numbers = selected_pages
+        page_item = self.page_plan_table.item(item.row(), 3)
+        if page_item is None:
+            return
+        selected = set(self.selected_page_numbers)
+        page_number = int(page_item.text())
+        if item.checkState() == Qt.CheckState.Checked:
+            selected.add(page_number)
+        else:
+            selected.discard(page_number)
+        self.selected_page_numbers = sorted(selected)
         self.page_selection_edit.setText(self._selected_pages_text())
         self._refresh_page_plan_table()
 
@@ -615,6 +618,15 @@ class PdfToolsWidget(QWidget):
         self.page_plan_table.blockSignals(True)
         self.page_plan_table.setRowCount(len(plan))
         for row, page in enumerate(plan):
+            check_item = QTableWidgetItem()
+            if operation in {"extract", "delete", "rotate"}:
+                check_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable)
+                check_state = Qt.CheckState.Checked if page.page_number in self.selected_page_numbers else Qt.CheckState.Unchecked
+                check_item.setCheckState(check_state)
+            else:
+                check_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            self.page_plan_table.setItem(row, 0, check_item)
+
             values = [
                 str(page.result_order),
                 page.source.name,
@@ -623,19 +635,8 @@ class PdfToolsWidget(QWidget):
                 str(page.rotation) if page.rotation else "",
                 str(page.output or self._planned_output(operation)),
             ]
-            for column, value in enumerate(values):
+            for column, value in enumerate(values, start=1):
                 self.page_plan_table.setItem(row, column, QTableWidgetItem(value))
-
-        self.page_plan_table.clearSelection()
-        if operation in {"extract", "delete", "rotate"}:
-            selection_model = self.page_plan_table.selectionModel()
-            selected = set(self.selected_page_numbers)
-            for row, page in enumerate(plan):
-                if page.page_number in selected:
-                    selection_model.select(
-                        self.page_plan_table.model().index(row, 0),
-                        QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
-                    )
 
         self.page_plan_table.blockSignals(False)
         self._refreshing_page_plan = False
@@ -745,7 +746,7 @@ class PdfToolsWidget(QWidget):
         self._set_resize_modes(self.pdf1_table, stretch={0})
         self._set_resize_modes(self.pdf2_table, stretch={0})
         self._set_resize_modes(self.merge_result_table, stretch={1})
-        self._set_resize_modes(self.page_plan_table, stretch={1, 5})
+        self._set_resize_modes(self.page_plan_table, stretch={2, 6})
 
     def _set_resize_modes(self, table: FileToolTable, *, stretch: set[int]):
         table.setWordWrap(False)

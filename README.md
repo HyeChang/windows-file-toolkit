@@ -93,7 +93,7 @@ Use the `PDF 도구` / `PDF Tools` tab to manage PDF pages without installing an
 - Rotate selected pages.
 - Reorder pages using an explicit page order.
 
-For extract, delete, and rotate, select page rows directly in the page preview table. For reorder, select a row and use the up/down buttons to build the result order. Split shows one output file per page.
+For extract, delete, and rotate, use the checkbox column in the page preview table. For reorder, select a row and use the up/down buttons to build the result order. Split shows one output file per page.
 
 PDF outputs are written to the selected output file or folder. Existing files are not overwritten; a numeric suffix is added when needed.
 

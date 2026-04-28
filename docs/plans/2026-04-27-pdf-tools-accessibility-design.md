@@ -28,10 +28,10 @@ If more than two PDFs are added in merge mode, only the first two PDFs are kept 
 Delete, split, extract, rotate, and reorder use a single page-plan table:
 
 - Each page row shows original page number, action, rotation, and output.
-- Extract marks selected table rows as included and others as excluded.
-- Delete marks selected table rows as deleted and others as kept.
+- Extract marks checked rows as included and others as excluded.
+- Delete marks checked rows as deleted and others as kept.
 - Split shows one output file per page.
-- Rotate shows selected table rows with the rotation angle.
+- Rotate shows checked rows with the rotation angle.
 - Reorder uses the table row order itself; users move rows up/down to define the output order.
 
 ## Safety
