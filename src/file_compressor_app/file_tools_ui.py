@@ -489,7 +489,7 @@ class RenameToolWidget(QWidget):
         else:
             for row, path in enumerate(self.paths):
                 self._set_row(row, [path.name, "", "", str(path.parent)])
-        _configure_preview_table_columns(self.table, stretch_columns={0, 1, 3})
+        _configure_preview_table_columns(self.table, preferred_widths={0: 280, 1: 280, 2: 96, 3: 560})
         self.refresh_detail_panel()
 
     def status_text(self, status: str) -> str:
@@ -695,7 +695,7 @@ class ClassifyToolWidget(QWidget):
         else:
             for row, path in enumerate(self.paths):
                 self._set_row(row, [path.name, "", "", ""])
-        _configure_preview_table_columns(self.table, stretch_columns={0, 2})
+        _configure_preview_table_columns(self.table, preferred_widths={0: 280, 1: 120, 2: 620, 3: 96})
         self.refresh_detail_panel()
 
     def status_text(self, status: str) -> str:
@@ -940,7 +940,7 @@ class DateChangeToolWidget(QWidget):
         else:
             for row, path in enumerate(self.paths):
                 self._set_row(row, [path.name, "", "", "", str(path.parent)])
-        _configure_preview_table_columns(self.table, stretch_columns={0, 4})
+        _configure_preview_table_columns(self.table, preferred_widths={0: 280, 1: 172, 2: 172, 3: 96, 4: 560})
         self.refresh_detail_panel()
 
     def status_text(self, status: str) -> str:
@@ -993,12 +993,15 @@ def _set_table_text(table: FileToolTable, row: int, column: int, value: str):
     table.setItem(row, column, item)
 
 
-def _configure_preview_table_columns(table: FileToolTable, *, stretch_columns: set[int]):
+def _configure_preview_table_columns(table: FileToolTable, *, preferred_widths: dict[int, int]):
     header = table.horizontalHeader()
     header.setStretchLastSection(False)
     for column in range(table.columnCount()):
-        mode = QHeaderView.ResizeMode.Stretch if column in stretch_columns else QHeaderView.ResizeMode.ResizeToContents
-        header.setSectionResizeMode(column, mode)
+        header.setSectionResizeMode(column, QHeaderView.ResizeMode.Interactive)
+        if column in preferred_widths:
+            table.setColumnWidth(column, preferred_widths[column])
+        else:
+            table.resizeColumnToContents(column)
 
 
 def _format_timestamp(timestamp: float) -> str:
