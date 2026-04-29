@@ -4,7 +4,7 @@ from pathlib import Path
 import shutil
 
 from PySide6.QtCore import QMimeData, QUrl
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QHeaderView
 
 from file_compressor.dependencies import DependencyStatus
 from file_compressor.file_tools import get_file_timestamps, set_file_timestamps
@@ -87,6 +87,39 @@ def test_rename_tab_previews_file_name_suffix_compact_date(monkeypatch):
     assert window.rename_tab.table.item(0, 0).text() == source.name
     assert window.rename_tab.table.item(0, 1).text() == "회의록_20260427.pdf"
     assert window.rename_tab.table.item(0, 2).text() == "준비"
+
+
+def test_file_tool_tables_keep_long_names_visible_with_stretch_columns(monkeypatch):
+    window = make_window(monkeypatch)
+    workdir = case_dir("ui-long-file-table")
+    long_folder = workdir / ("프로젝트_" + "긴경로_" * 8)
+    long_folder.mkdir()
+    source = long_folder / ("아주_긴_파일명_" + "확인_" * 10 + ".pptx")
+    source.write_bytes(b"pptx")
+
+    window.rename_tab.add_paths([source])
+    window.rename_tab.suffix_edit.setText("_변경")
+    window.rename_tab.preview_changes()
+
+    rename_header = window.rename_tab.table.horizontalHeader()
+    assert rename_header.sectionResizeMode(0) == QHeaderView.ResizeMode.Stretch
+    assert rename_header.sectionResizeMode(1) == QHeaderView.ResizeMode.Stretch
+    assert rename_header.sectionResizeMode(3) == QHeaderView.ResizeMode.Stretch
+    assert window.rename_tab.table.item(0, 0).toolTip() == source.name
+    assert window.rename_tab.table.item(0, 3).toolTip() == str(source.parent)
+
+    window.classify_tab.set_output_folder(workdir / "sorted")
+    window.classify_tab.add_paths([source])
+    window.classify_tab.preview_moves()
+    classify_header = window.classify_tab.table.horizontalHeader()
+    assert classify_header.sectionResizeMode(0) == QHeaderView.ResizeMode.Stretch
+    assert classify_header.sectionResizeMode(2) == QHeaderView.ResizeMode.Stretch
+
+    window.date_tab.add_paths([source])
+    window.date_tab.preview_changes()
+    date_header = window.date_tab.table.horizontalHeader()
+    assert date_header.sectionResizeMode(0) == QHeaderView.ResizeMode.Stretch
+    assert date_header.sectionResizeMode(4) == QHeaderView.ResizeMode.Stretch
 
 
 def test_rename_tab_apply_preserves_modified_time(monkeypatch):

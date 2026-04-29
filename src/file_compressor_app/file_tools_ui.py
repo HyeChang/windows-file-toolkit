@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QDateTime
+from PySide6.QtCore import QDateTime, Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QPushButton,
@@ -173,6 +174,9 @@ class FileToolTable(QTableWidget):
         self.setAcceptDrops(on_files is not None)
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.setTextElideMode(Qt.TextElideMode.ElideMiddle)
+        self.setWordWrap(False)
 
     def dragEnterEvent(self, event):
         if self._has_local_urls(event):
@@ -485,7 +489,7 @@ class RenameToolWidget(QWidget):
         else:
             for row, path in enumerate(self.paths):
                 self._set_row(row, [path.name, "", "", str(path.parent)])
-        self.table.resizeColumnsToContents()
+        _configure_preview_table_columns(self.table, stretch_columns={0, 1, 3})
         self.refresh_detail_panel()
 
     def status_text(self, status: str) -> str:
@@ -493,7 +497,7 @@ class RenameToolWidget(QWidget):
 
     def _set_row(self, row: int, values: list[str]):
         for column, value in enumerate(values):
-            self.table.setItem(row, column, QTableWidgetItem(value))
+            _set_table_text(self.table, row, column, value)
 
     def refresh_detail_panel(self):
         row = self._selected_row()
@@ -691,7 +695,7 @@ class ClassifyToolWidget(QWidget):
         else:
             for row, path in enumerate(self.paths):
                 self._set_row(row, [path.name, "", "", ""])
-        self.table.resizeColumnsToContents()
+        _configure_preview_table_columns(self.table, stretch_columns={0, 2})
         self.refresh_detail_panel()
 
     def status_text(self, status: str) -> str:
@@ -705,7 +709,7 @@ class ClassifyToolWidget(QWidget):
 
     def _set_row(self, row: int, values: list[str]):
         for column, value in enumerate(values):
-            self.table.setItem(row, column, QTableWidgetItem(value))
+            _set_table_text(self.table, row, column, value)
 
     def refresh_detail_panel(self):
         row = self._selected_row()
@@ -936,7 +940,7 @@ class DateChangeToolWidget(QWidget):
         else:
             for row, path in enumerate(self.paths):
                 self._set_row(row, [path.name, "", "", "", str(path.parent)])
-        self.table.resizeColumnsToContents()
+        _configure_preview_table_columns(self.table, stretch_columns={0, 4})
         self.refresh_detail_panel()
 
     def status_text(self, status: str) -> str:
@@ -944,7 +948,7 @@ class DateChangeToolWidget(QWidget):
 
     def _set_row(self, row: int, values: list[str]):
         for column, value in enumerate(values):
-            self.table.setItem(row, column, QTableWidgetItem(value))
+            _set_table_text(self.table, row, column, value)
 
     def refresh_detail_panel(self):
         row = self._selected_row()
@@ -981,6 +985,20 @@ def _expand_files(paths: list[Path]) -> list[Path]:
         elif path.is_file():
             files.append(path)
     return files
+
+
+def _set_table_text(table: FileToolTable, row: int, column: int, value: str):
+    item = QTableWidgetItem(value)
+    item.setToolTip(value)
+    table.setItem(row, column, item)
+
+
+def _configure_preview_table_columns(table: FileToolTable, *, stretch_columns: set[int]):
+    header = table.horizontalHeader()
+    header.setStretchLastSection(False)
+    for column in range(table.columnCount()):
+        mode = QHeaderView.ResizeMode.Stretch if column in stretch_columns else QHeaderView.ResizeMode.ResizeToContents
+        header.setSectionResizeMode(column, mode)
 
 
 def _format_timestamp(timestamp: float) -> str:
