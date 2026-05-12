@@ -225,14 +225,46 @@ def _save_hwp_document(app: Any, source: Path, output: Path) -> None:
         pass
 
     try:
-        opened = app.Open(str(source.resolve()))
-        if opened is False:
-            raise RuntimeError("HWP file could not be opened.")
-        saved = app.SaveAs(str(output.resolve()), "HWP")
-        if saved is False:
-            raise RuntimeError("HWP file could not be saved.")
+        _open_hwp_document(app, source)
+        _save_hwp_as(app, output)
+        if not output.exists():
+            raise RuntimeError("HWP file was saved but output was not created.")
     finally:
         app.Quit()
+
+
+def _open_hwp_document(app: Any, source: Path) -> None:
+    target = str(source.resolve())
+    _try_hwp_call(
+        app.Open,
+        [(target,), (target, "HWP", "")],
+        "HWP file could not be opened.",
+    )
+
+
+def _save_hwp_as(app: Any, output: Path) -> None:
+    target = str(output.resolve())
+    _try_hwp_call(
+        app.SaveAs,
+        [(target, "HWP"), (target, "HWP", ""), (target,)],
+        "HWP file could not be saved.",
+    )
+
+
+def _try_hwp_call(method: Any, attempts: list[tuple[Any, ...]], failure_message: str) -> None:
+    errors: list[Exception] = []
+    for args in attempts:
+        try:
+            result = method(*args)
+        except Exception as exc:
+            errors.append(exc)
+            continue
+        if result is not False:
+            return
+        errors.append(RuntimeError(failure_message))
+    if errors:
+        raise RuntimeError(f"{failure_message} {errors[0]}")
+    raise RuntimeError(failure_message)
 
 
 def _remove_file_if_exists(path: Path) -> None:

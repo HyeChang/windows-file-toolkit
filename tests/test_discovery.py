@@ -45,17 +45,18 @@ def test_expand_sources_returns_deterministic_supported_paths():
     second = source_root / "alpha" / "budget.xls"
     third = source_root / "alpha" / "overview.hwpx"
     unsupported = workdir / "aaa.txt"
-    ignored_nested = source_root / "alpha" / "draft.docx"
+    fourth = source_root / "alpha" / "draft.docx"
 
     standalone.write_text("hwp")
     first.write_text("ppt")
     second.write_text("xls")
     third.write_text("hwpx")
     unsupported.write_text("ignore")
-    ignored_nested.write_text("ignore")
+    fourth.write_text("docx")
 
     assert expand_sources([standalone, unsupported, source_root]) == [
         second,
+        fourth,
         third,
         first,
         standalone,

@@ -99,6 +99,25 @@ def test_compress_many_accepts_paths_and_jobs(monkeypatch):
     assert calls[1] == (job_source, job.output, options)
 
 
+def test_docx_path_input_is_compressed_as_ooxml(monkeypatch):
+    workdir = case_dir("engine-docx")
+    source = workdir / "letter.docx"
+    source.write_text("docx")
+    calls = []
+
+    def fake_compress_zip_document(path, output, *, options=None):
+        calls.append((path, output))
+        return CompressionResult(status=JobStatus.COMPLETED, source=path, output=output)
+
+    monkeypatch.setattr("file_compressor.engine.compress_zip_document", fake_compress_zip_document)
+
+    result = compress_file(source)
+
+    assert result.status is JobStatus.COMPLETED
+    assert result.output == workdir / "letter_compressed.docx"
+    assert calls == [(source, workdir / "letter_compressed.docx")]
+
+
 def test_legacy_path_input_uses_modern_output_suffix(monkeypatch):
     workdir = case_dir("engine-legacy-path-output")
     source = workdir / "budget.xls"

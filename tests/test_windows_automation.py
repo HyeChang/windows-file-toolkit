@@ -73,6 +73,49 @@ def test_hwp_opens_and_saves_to_planned_output():
     assert ("quit",) in events
 
 
+def test_hwp_open_and_save_retry_with_format_arguments():
+    workdir = case_dir("hwp-open-save-retry")
+    source = workdir / "doc.hwp"
+    source.write_bytes(b"hwp")
+    output = workdir / "out" / "doc.hwp"
+    events = []
+
+    class FakeHwp:
+        def RegisterModule(self, dll_name, module_name):
+            events.append(("register", dll_name, module_name))
+
+        def Open(self, *args):
+            events.append(("open", args))
+            if len(args) == 1:
+                raise TypeError("single argument open rejected")
+            return True
+
+        def SaveAs(self, *args):
+            events.append(("save_as", args))
+            if len(args) == 2:
+                raise TypeError("two argument save rejected")
+            Path(args[0]).write_bytes(b"saved-hwp")
+            return True
+
+        def Quit(self):
+            events.append(("quit",))
+
+    result = compress_hwp(
+        source,
+        output,
+        automation_available=lambda: True,
+        dispatch=lambda progid: FakeHwp(),
+    )
+
+    assert result.status is JobStatus.COMPLETED
+    assert output.read_bytes() == b"saved-hwp"
+    assert ("open", (str(source.resolve()),)) in events
+    assert ("open", (str(source.resolve()), "HWP", "")) in events
+    assert ("save_as", (str(output.resolve()), "HWP")) in events
+    assert ("save_as", (str(output.resolve()), "HWP", "")) in events
+    assert ("quit",) in events
+
+
 def test_hwp_returns_failed_and_quits_when_save_fails():
     workdir = case_dir("hwp-save-fails")
     source = workdir / "doc.hwp"

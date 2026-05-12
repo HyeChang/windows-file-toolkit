@@ -3,7 +3,7 @@ from pathlib import Path
 from file_compressor.models import FileKind
 
 
-OOXML_EXTENSIONS = {".xlsx", ".xlsm", ".pptx", ".pptm"}
+OOXML_EXTENSIONS = {".docx", ".docm", ".xlsx", ".xlsm", ".pptx", ".pptm"}
 LEGACY_OFFICE_EXTENSIONS = {".xls", ".ppt"}
 SUPPORTED_EXTENSIONS = OOXML_EXTENSIONS | LEGACY_OFFICE_EXTENSIONS | {".hwpx", ".pdf", ".hwp"}
 

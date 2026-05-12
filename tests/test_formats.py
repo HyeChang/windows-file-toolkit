@@ -7,6 +7,7 @@ from file_compressor.models import FileKind, JobStatus
 def test_classifies_zip_based_office_files_case_insensitively():
     assert classify_file(Path("book.XLSX")) is FileKind.OOXML
     assert classify_file(Path("deck.pptm")) is FileKind.OOXML
+    assert classify_file(Path("letter.DOCX")) is FileKind.OOXML
 
 
 def test_classifies_korean_and_pdf_files():
