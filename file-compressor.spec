@@ -1,0 +1,48 @@
+# -*- mode: python ; coding: utf-8 -*-
+
+from pathlib import Path
+
+
+datas = []
+jpegtran_dir = Path("tools/jpegtran")
+jpegtran_source = Path("tools/jpegtran/jpegtran.exe")
+jpegtran_dll = Path("tools/jpegtran/jpeg62.dll")
+if jpegtran_source.exists():
+    for source in (jpegtran_source, jpegtran_dll, Path("tools/jpegtran/LICENSE-libjpeg-turbo.md")):
+        if source.exists():
+            datas.append((str(source), "tools/jpegtran"))
+
+
+a = Analysis(
+    ["src/file_compressor_app/main.py"],
+    pathex=["src"],
+    binaries=[],
+    datas=datas,
+    hiddenimports=[],
+    hookspath=[],
+    hooksconfig={},
+    runtime_hooks=[],
+    excludes=[],
+    noarchive=False,
+)
+pyz = PYZ(a.pure)
+exe = EXE(
+    pyz,
+    a.scripts,
+    a.binaries,
+    a.datas,
+    [],
+    name="FileCompressor",
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    runtime_tmpdir=None,
+    console=False,
+    disable_windowed_traceback=False,
+    argv_emulation=False,
+    target_arch=None,
+    codesign_identity=None,
+    entitlements_file=None,
+)

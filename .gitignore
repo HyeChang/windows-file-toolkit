@@ -1,7 +1,58 @@
+# Local Codex/worktree state
+.agents/
+.codex/
+.codex-temp/
 .worktrees/
+
+# Local test/sample data
+테스트/
+python-write-check/
+.test-output/
+pytest-cache-files-*/
+pytest-temp/
+
+# Python cache and environments
 __pycache__/
+*.py[cod]
+*$py.class
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 .venv/
+venv/
+env/
+
+# Build/package outputs
 build/
 dist/
 *.egg-info/
+*.spec.bak
+*.bak
+*.tmp
+*.log
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+*.p12
+*.crt
+*.cer
+*secret*
+*secrets*
+*credential*
+*credentials*
+*token*
+*password*
+
+# OS/editor metadata
+Thumbs.db
+Desktop.ini
+.DS_Store
+.idea/
+.vscode/
