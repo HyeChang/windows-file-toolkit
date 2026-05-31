@@ -2,6 +2,7 @@
 .agents/
 .codex/
 .codex-temp/
+.playwright-mcp/
 .worktrees/
 
 # Local test/sample data
