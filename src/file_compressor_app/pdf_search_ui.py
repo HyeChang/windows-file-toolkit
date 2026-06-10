@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import QObject, QThread, Qt, QUrl, Signal, Slot
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
+    QProgressBar,
     QPushButton,
     QSizePolicy,
     QSplitter,
@@ -23,7 +24,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from file_compressor.content_search import SearchResult, search_files
+from file_compressor.content_search import SearchResult, kind_for_path, search_file
 from file_compressor.dependencies import TESSERACT_DOWNLOAD_URL, detect_tesseract
 from file_compressor.pdf_tools import (
     PdfPagePlan,
@@ -45,6 +46,7 @@ TRANSLATIONS = {
         "preview": "미리보기",
         "apply": "적용",
         "search": "검색",
+        "searching": "검색 중...",
         "clear_list": "목록 비우기",
         "select_files": "파일 선택",
         "select_folder": "폴더 선택",
@@ -88,6 +90,11 @@ TRANSLATIONS = {
         "search_options": "검색 옵션",
         "query": "검색어",
         "use_ocr": "OCR 사용",
+        "search_progress_idle": "검색 진행: 대기",
+        "search_progress": "검색 진행: {done}/{total}",
+        "current_search_file": "현재: {file}",
+        "waiting": "대기",
+        "searching_status": "검색 중",
         "ocr_available": "OCR: 사용 가능",
         "ocr_missing": "OCR: 설치 필요",
         "install_ocr": "OCR 설치",
@@ -106,6 +113,7 @@ TRANSLATIONS = {
         "preview": "Preview",
         "apply": "Apply",
         "search": "Search",
+        "searching": "Searching...",
         "clear_list": "Clear list",
         "select_files": "Select files",
         "select_folder": "Select folder",
@@ -149,6 +157,11 @@ TRANSLATIONS = {
         "search_options": "Search options",
         "query": "Query",
         "use_ocr": "Use OCR",
+        "search_progress_idle": "Search progress: idle",
+        "search_progress": "Search progress: {done}/{total}",
+        "current_search_file": "Current: {file}",
+        "waiting": "Waiting",
+        "searching_status": "Searching",
         "ocr_available": "OCR: available",
         "ocr_missing": "OCR: install required",
         "install_ocr": "Install OCR",
@@ -762,6 +775,45 @@ class PdfToolsWidget(QWidget):
         return str(actions.get(action, action))
 
 
+class ContentSearchWorker(QObject):
+    file_started = Signal(int, str)
+    progress_changed = Signal(int, int)
+    result_ready = Signal(int, object)
+    finished = Signal(object)
+
+    def __init__(
+        self,
+        paths: list[Path],
+        query: str,
+        *,
+        use_ocr: bool,
+        tesseract_executable: str | None,
+    ):
+        super().__init__()
+        self.paths = list(paths)
+        self.query = query
+        self.use_ocr = use_ocr
+        self.tesseract_executable = tesseract_executable
+
+    @Slot()
+    def run(self):
+        all_results: list[SearchResult] = []
+        total = len(self.paths)
+        self.progress_changed.emit(0, total)
+        for index, path in enumerate(self.paths):
+            self.file_started.emit(index, path.name)
+            results = search_file(
+                path,
+                self.query,
+                use_ocr=self.use_ocr,
+                tesseract_executable=self.tesseract_executable,
+            )
+            all_results.extend(results)
+            self.result_ready.emit(index, results)
+            self.progress_changed.emit(index + 1, total)
+        self.finished.emit(all_results)
+
+
 class ContentSearchWidget(QWidget):
     def __init__(self, language: str = "ko"):
         super().__init__()
@@ -769,6 +821,8 @@ class ContentSearchWidget(QWidget):
         self.paths: list[Path] = []
         self.results: list[SearchResult] = []
         self.tesseract_status = detect_tesseract()
+        self.search_thread: QThread | None = None
+        self.search_worker: ContentSearchWorker | None = None
 
         self.add_files_button = QPushButton()
         self.add_folder_button = QPushButton()
@@ -780,6 +834,8 @@ class ContentSearchWidget(QWidget):
         self.use_ocr_checkbox = QCheckBox()
         self.ocr_status_label = QLabel()
         self.ocr_install_button = QPushButton()
+        self.search_progress_bar = QProgressBar()
+        self.search_progress_label = QLabel()
         self.table = FileToolTable(5, self.add_paths)
 
         self.add_files_button.clicked.connect(self.pick_files)
@@ -804,9 +860,16 @@ class ContentSearchWidget(QWidget):
         options.addStretch()
         self.options_group.setLayout(options)
 
+        progress = QHBoxLayout()
+        self.search_progress_bar.setRange(0, 1)
+        self.search_progress_bar.setValue(0)
+        progress.addWidget(self.search_progress_bar)
+        progress.addWidget(self.search_progress_label)
+
         layout = QVBoxLayout()
         layout.addLayout(actions)
         layout.addWidget(self.options_group)
+        layout.addLayout(progress)
         layout.addWidget(self.table)
         self.setLayout(layout)
         self.set_language(language)
@@ -819,12 +882,14 @@ class ContentSearchWidget(QWidget):
         self.add_files_button.setText(str(self.tr("add_files")))
         self.add_folder_button.setText(str(self.tr("add_folder")))
         self.clear_list_button.setText(str(self.tr("clear_list")))
-        self.search_button.setText(str(self.tr("search")))
+        self.search_button.setText(str(self.tr("searching" if self.search_thread else "search")))
         self.options_group.setTitle(str(self.tr("search_options")))
         self.query_label.setText(str(self.tr("query")))
         self.use_ocr_checkbox.setText(str(self.tr("use_ocr")))
         self.ocr_install_button.setText(str(self.tr("install_ocr")))
         self.table.setHorizontalHeaderLabels(self.tr("search_headers"))
+        if self.search_thread is None:
+            self.search_progress_label.setText(str(self.tr("search_progress_idle")))
         self._refresh_ocr_status()
         self.refresh_table()
 
@@ -857,40 +922,119 @@ class ContentSearchWidget(QWidget):
         self.refresh_table()
 
     def run_search(self):
+        if self.search_thread is not None:
+            return
         query = self.query_edit.text().strip()
-        if not query:
+        if not query or not self.paths:
             return
         executable = self.tesseract_status.executable if self.use_ocr_checkbox.isChecked() else None
-        self.results = search_files(
+        self.results = []
+        self._prepare_search_table()
+        self.search_progress_bar.setRange(0, len(self.paths))
+        self.search_progress_bar.setValue(0)
+        self.search_progress_label.setText(
+            str(self.tr("search_progress")).format(done=0, total=len(self.paths))
+        )
+        self._set_search_running(True)
+
+        thread = QThread(self)
+        worker = ContentSearchWorker(
             self.paths,
             query,
             use_ocr=self.use_ocr_checkbox.isChecked(),
             tesseract_executable=executable,
         )
-        self.refresh_table()
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.file_started.connect(self._handle_search_file_started)
+        worker.progress_changed.connect(self._handle_search_progress)
+        worker.result_ready.connect(self._handle_search_result)
+        worker.finished.connect(self._handle_search_finished)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(self._handle_search_thread_finished)
+        self.search_thread = thread
+        self.search_worker = worker
+        thread.start()
 
     def refresh_table(self):
         if self.results:
             self.table.setRowCount(len(self.results))
             for row, result in enumerate(self.results):
-                values = [
-                    result.source.name,
-                    result.kind,
-                    result.location,
-                    result.snippet,
-                    self.status_text(result.status),
-                ]
-                for column, value in enumerate(values):
-                    item = QTableWidgetItem(value)
-                    if column == 4:
-                        item.setToolTip(result.message)
-                    self.table.setItem(row, column, item)
+                self._set_result_row(row, result)
         else:
             self.table.setRowCount(len(self.paths))
             for row, path in enumerate(self.paths):
                 for column, value in enumerate([path.name, path.suffix.lower(), "", "", ""]):
                     self.table.setItem(row, column, QTableWidgetItem(value))
         self.table.resizeColumnsToContents()
+
+    def _prepare_search_table(self):
+        self.table.setRowCount(len(self.paths))
+        for row, path in enumerate(self.paths):
+            self.table.removeCellWidget(row, 4)
+            values = [path.name, kind_for_path(path), "-", "", str(self.tr("waiting"))]
+            for column, value in enumerate(values):
+                self.table.setItem(row, column, QTableWidgetItem(value))
+        self.table.resizeColumnsToContents()
+
+    def _set_result_row(self, row: int, result: SearchResult):
+        self.table.removeCellWidget(row, 4)
+        message_or_snippet = result.snippet or result.message
+        values = [
+            result.source.name,
+            result.kind,
+            result.location,
+            message_or_snippet,
+            self.status_text(result.status),
+        ]
+        for column, value in enumerate(values):
+            item = QTableWidgetItem(value)
+            if result.message:
+                item.setToolTip(result.message)
+            self.table.setItem(row, column, item)
+
+    def _handle_search_file_started(self, row: int, file_name: str):
+        progress = QProgressBar()
+        progress.setRange(0, 0)
+        progress.setFormat(str(self.tr("searching_status")))
+        self.table.setCellWidget(row, 4, progress)
+        self.search_progress_label.setText(str(self.tr("current_search_file")).format(file=file_name))
+
+    def _handle_search_progress(self, done: int, total: int):
+        self.search_progress_bar.setRange(0, total if total else 1)
+        self.search_progress_bar.setValue(done)
+        if done >= total:
+            self.search_progress_label.setText(
+                str(self.tr("search_progress")).format(done=done, total=total)
+            )
+
+    def _handle_search_result(self, row: int, results: list[SearchResult]):
+        if not results:
+            return
+        self._set_result_row(row, results[0])
+        self.table.resizeColumnsToContents()
+
+    def _handle_search_finished(self, results: list[SearchResult]):
+        self.results = list(results)
+        self.refresh_table()
+
+    def _handle_search_thread_finished(self):
+        thread = self.search_thread
+        if thread is not None:
+            thread.deleteLater()
+        self.search_thread = None
+        self.search_worker = None
+        self._set_search_running(False)
+
+    def _set_search_running(self, running: bool):
+        self.add_files_button.setEnabled(not running)
+        self.add_folder_button.setEnabled(not running)
+        self.clear_list_button.setEnabled(not running)
+        self.query_edit.setEnabled(not running)
+        self.use_ocr_checkbox.setEnabled(not running)
+        self.search_button.setEnabled(not running)
+        self.search_button.setText(str(self.tr("searching" if running else "search")))
 
     def status_text(self, status: str) -> str:
         return str(TRANSLATIONS[self.language].get(status, status))

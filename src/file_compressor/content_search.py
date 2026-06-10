@@ -1,19 +1,54 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+import re
 import subprocess
+import tempfile
+from typing import Any
+import xml.etree.ElementTree as ET
+from zipfile import ZipFile
+import zlib
 
 from docx import Document
+import olefile
 from openpyxl import load_workbook
 from pypdf import PdfReader
+
+from file_compressor.compressors.windows_automation import (
+    HWP_APPLICATION_PROGID,
+    POWERPOINT_APPLICATION_PROGID,
+    POWERPOINT_PPTX_FILE_FORMAT,
+    _initialize_com,
+    default_com_dispatch,
+    default_hancom_available,
+    default_powerpoint_available,
+)
+
+try:
+    import pypdfium2 as pdfium
+except ImportError:
+    pdfium = None
 
 
 TEXT_SUFFIXES = {".txt", ".csv", ".md", ".log"}
 PDF_SUFFIXES = {".pdf"}
 DOCX_SUFFIXES = {".docx"}
 XLSX_SUFFIXES = {".xlsx", ".xlsm"}
+PPTX_SUFFIXES = {".pptx", ".pptm", ".ppsx", ".ppsm"}
+PPT_SUFFIXES = {".ppt", ".pps"}
+HWPX_SUFFIXES = {".hwpx"}
+HWP_SUFFIXES = {".hwp"}
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}
+HWP5_PARA_TEXT_TAG = 67
+PPTX_SLIDE_RE = re.compile(r"ppt/slides/slide(\d+)\.xml$", re.IGNORECASE)
+PPTX_NOTES_RE = re.compile(r"ppt/notesSlides/notesSlide(\d+)\.xml$", re.IGNORECASE)
+PdfPageRenderer = Callable[[Path, Path], list[Path]]
+
+
+class ContentSearchDependencyError(RuntimeError):
+    pass
 
 
 @dataclass(frozen=True)
@@ -33,7 +68,14 @@ class SearchResult:
     message: str = ""
 
 
-def extract_text_from_file(path: Path) -> list[TextSection]:
+def extract_text_from_file(
+    path: Path,
+    *,
+    hwp_automation_available: Callable[[], bool] = default_hancom_available,
+    hwp_dispatch: Callable[[str], Any] = default_com_dispatch,
+    powerpoint_automation_available: Callable[[], bool] = default_powerpoint_available,
+    powerpoint_dispatch: Callable[[str], Any] = default_com_dispatch,
+) -> list[TextSection]:
     path = Path(path)
     suffix = path.suffix.lower()
     if suffix in TEXT_SUFFIXES:
@@ -44,6 +86,22 @@ def extract_text_from_file(path: Path) -> list[TextSection]:
         return _extract_docx(path)
     if suffix in XLSX_SUFFIXES:
         return _extract_xlsx(path)
+    if suffix in PPTX_SUFFIXES:
+        return _extract_pptx(path)
+    if suffix in PPT_SUFFIXES:
+        return _extract_ppt(
+            path,
+            automation_available=powerpoint_automation_available,
+            dispatch=powerpoint_dispatch,
+        )
+    if suffix in HWPX_SUFFIXES:
+        return _extract_hwpx(path)
+    if suffix in HWP_SUFFIXES:
+        return _extract_hwp(
+            path,
+            automation_available=hwp_automation_available,
+            dispatch=hwp_dispatch,
+        )
     raise ValueError("Unsupported file type.")
 
 
@@ -54,59 +112,114 @@ def search_files(
     use_ocr: bool = False,
     tesseract_executable: str | None = None,
     ocr_runner=subprocess.run,
+    pdf_page_renderer: PdfPageRenderer | None = None,
+    hwp_automation_available: Callable[[], bool] = default_hancom_available,
+    hwp_dispatch: Callable[[str], Any] = default_com_dispatch,
+    powerpoint_automation_available: Callable[[], bool] = default_powerpoint_available,
+    powerpoint_dispatch: Callable[[str], Any] = default_com_dispatch,
 ) -> list[SearchResult]:
     results: list[SearchResult] = []
-    query_normalized = query.lower()
     for path in paths:
-        path = Path(path)
-        try:
-            sections = extract_text_from_file(path)
-        except ValueError:
-            if use_ocr and path.suffix.lower() in IMAGE_SUFFIXES | PDF_SUFFIXES:
-                results.extend(
-                    _search_ocr(path, query_normalized, tesseract_executable, ocr_runner)
-                )
-            else:
-                results.append(
-                    SearchResult(
-                        source=path,
-                        kind=_kind_for_path(path),
-                        location="-",
-                        snippet="",
-                        status="skipped",
-                        message="Unsupported file type.",
-                    )
-                )
-            continue
-        except Exception as exc:
-            results.append(
-                SearchResult(
-                    source=path,
-                    kind=_kind_for_path(path),
-                    location="-",
-                    snippet="",
-                    status="failed",
-                    message=str(exc),
-                )
+        results.extend(
+            search_file(
+                path,
+                query,
+                use_ocr=use_ocr,
+                tesseract_executable=tesseract_executable,
+                ocr_runner=ocr_runner,
+                pdf_page_renderer=pdf_page_renderer,
+                hwp_automation_available=hwp_automation_available,
+                hwp_dispatch=hwp_dispatch,
+                powerpoint_automation_available=powerpoint_automation_available,
+                powerpoint_dispatch=powerpoint_dispatch,
             )
-            continue
-
-        matched = _search_sections(path, sections, query_normalized)
-        if matched:
-            results.extend(matched)
-        elif use_ocr and path.suffix.lower() in IMAGE_SUFFIXES | PDF_SUFFIXES:
-            results.extend(_search_ocr(path, query_normalized, tesseract_executable, ocr_runner))
-        else:
-            results.append(
-                SearchResult(
-                    source=path,
-                    kind=_kind_for_path(path),
-                    location="-",
-                    snippet="",
-                    status="no_match",
-                )
-            )
+        )
     return results
+
+
+def search_file(
+    path: Path,
+    query: str,
+    *,
+    use_ocr: bool = False,
+    tesseract_executable: str | None = None,
+    ocr_runner=subprocess.run,
+    pdf_page_renderer: PdfPageRenderer | None = None,
+    hwp_automation_available: Callable[[], bool] = default_hancom_available,
+    hwp_dispatch: Callable[[str], Any] = default_com_dispatch,
+    powerpoint_automation_available: Callable[[], bool] = default_powerpoint_available,
+    powerpoint_dispatch: Callable[[str], Any] = default_com_dispatch,
+) -> list[SearchResult]:
+    path = Path(path)
+    query_normalized = query.lower()
+    try:
+        sections = extract_text_from_file(
+            path,
+            hwp_automation_available=hwp_automation_available,
+            hwp_dispatch=hwp_dispatch,
+            powerpoint_automation_available=powerpoint_automation_available,
+            powerpoint_dispatch=powerpoint_dispatch,
+        )
+    except ValueError:
+        if use_ocr and path.suffix.lower() in IMAGE_SUFFIXES | PDF_SUFFIXES:
+            return _search_ocr(path, query_normalized, tesseract_executable, ocr_runner, pdf_page_renderer)
+        return [
+            SearchResult(
+                source=path,
+                kind=kind_for_path(path),
+                location="-",
+                snippet="",
+                status="skipped",
+                message="Unsupported file type.",
+            )
+        ]
+    except ContentSearchDependencyError as exc:
+        return [
+            SearchResult(
+                source=path,
+                kind=kind_for_path(path),
+                location="-",
+                snippet="",
+                status="skipped",
+                message=str(exc),
+            )
+        ]
+    except Exception as exc:
+        message = _exception_message(exc)
+        if path.suffix.lower() in HWP_SUFFIXES:
+            message = f"HWP text extraction failed: {message}"
+        return [
+            SearchResult(
+                source=path,
+                kind=kind_for_path(path),
+                location="-",
+                snippet="",
+                status="failed",
+                message=message,
+            )
+        ]
+
+    matched = _search_sections(path, sections, query_normalized)
+    if matched:
+        return matched
+    if use_ocr and path.suffix.lower() in IMAGE_SUFFIXES | PDF_SUFFIXES:
+        return _search_ocr(path, query_normalized, tesseract_executable, ocr_runner, pdf_page_renderer)
+    return [
+        SearchResult(
+            source=path,
+            kind=kind_for_path(path),
+            location="-",
+            snippet="",
+            status="no_match",
+        )
+    ]
+
+
+def _exception_message(exc: Exception) -> str:
+    message = str(exc).strip()
+    if message:
+        return message
+    return exc.__class__.__name__
 
 
 def run_tesseract_ocr(
@@ -121,6 +234,53 @@ def run_tesseract_ocr(
     if result.returncode != 0:
         raise OSError(result.stderr.strip() or "Tesseract OCR failed.")
     return result.stdout
+
+
+def run_pdf_tesseract_ocr(
+    path: Path,
+    *,
+    executable: str = "tesseract",
+    language: str = "kor+eng",
+    runner=subprocess.run,
+    page_renderer: PdfPageRenderer | None = None,
+) -> list[TextSection]:
+    renderer = page_renderer or _render_pdf_pages
+    with tempfile.TemporaryDirectory(prefix="file-compressor-pdf-ocr-") as temp_dir:
+        page_images = renderer(Path(path), Path(temp_dir))
+        sections: list[TextSection] = []
+        for index, image_path in enumerate(page_images, start=1):
+            text = run_tesseract_ocr(
+                image_path,
+                executable=executable,
+                language=language,
+                runner=runner,
+            )
+            sections.append(TextSection(kind="OCR", location=f"OCR Page {index}", text=text))
+        return sections
+
+
+def _render_pdf_pages(path: Path, output_dir: Path) -> list[Path]:
+    if pdfium is None:
+        raise OSError("PDF OCR renderer is not available in this app bundle.")
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    document = pdfium.PdfDocument(str(path))
+    try:
+        page_images: list[Path] = []
+        for index, page in enumerate(document, start=1):
+            try:
+                image = page.render(scale=2).to_pil()
+                output = output_dir / f"page-{index:04d}.png"
+                image.save(output)
+                page_images.append(output)
+            finally:
+                try:
+                    page.close()
+                except Exception:
+                    pass
+        return page_images
+    finally:
+        document.close()
 
 
 def _extract_text_file(path: Path) -> list[TextSection]:
@@ -168,6 +328,300 @@ def _extract_xlsx(path: Path) -> list[TextSection]:
     return sections
 
 
+def _extract_pptx(path: Path) -> list[TextSection]:
+    sections: list[TextSection] = []
+    with ZipFile(path, "r") as archive:
+        for name in sorted(
+            (
+                item
+                for item in archive.namelist()
+                if PPTX_SLIDE_RE.match(item) or PPTX_NOTES_RE.match(item)
+            ),
+            key=_pptx_part_sort_key,
+        ):
+            text = _xml_text(archive.read(name))
+            if text:
+                sections.append(TextSection(kind="PPTX", location=_pptx_part_location(name), text=text))
+    return sections
+
+
+def _pptx_part_sort_key(name: str) -> tuple[int, int, str]:
+    slide_match = PPTX_SLIDE_RE.match(name)
+    if slide_match:
+        return (0, int(slide_match.group(1)), name)
+    notes_match = PPTX_NOTES_RE.match(name)
+    if notes_match:
+        return (1, int(notes_match.group(1)), name)
+    return (2, 0, name)
+
+
+def _pptx_part_location(name: str) -> str:
+    slide_match = PPTX_SLIDE_RE.match(name)
+    if slide_match:
+        return f"Slide {int(slide_match.group(1))}"
+    notes_match = PPTX_NOTES_RE.match(name)
+    if notes_match:
+        return f"Notes {int(notes_match.group(1))}"
+    return name
+
+
+def _extract_ppt(
+    path: Path,
+    *,
+    automation_available: Callable[[], bool],
+    dispatch: Callable[[str], Any],
+) -> list[TextSection]:
+    if not automation_available():
+        raise ContentSearchDependencyError("Microsoft PowerPoint is required for legacy PPT content search.")
+
+    uninitialize = _initialize_com()
+    app = None
+    presentation = None
+    try:
+        app = dispatch(POWERPOINT_APPLICATION_PROGID)
+        with tempfile.TemporaryDirectory(prefix="file-compressor-ppt-") as temp_dir:
+            converted = Path(temp_dir) / f"{path.stem}.pptx"
+            presentation = app.Presentations.Open(str(path.resolve()), WithWindow=False, ReadOnly=True)
+            presentation.SaveAs(str(converted.resolve()), POWERPOINT_PPTX_FILE_FORMAT)
+            presentation.Close()
+            presentation = None
+            return _extract_pptx(converted)
+    finally:
+        try:
+            if presentation is not None:
+                presentation.Close()
+        except Exception:
+            pass
+        try:
+            if app is not None:
+                app.Quit()
+        finally:
+            uninitialize()
+
+
+def _extract_hwpx(path: Path) -> list[TextSection]:
+    sections: list[TextSection] = []
+    with ZipFile(path, "r") as archive:
+        for name in sorted(archive.namelist()):
+            lower_name = name.lower()
+            if not lower_name.startswith("contents/") or not lower_name.endswith(".xml"):
+                continue
+            text = _xml_text(archive.read(name))
+            if text:
+                sections.append(TextSection(kind="HWPX", location=name, text=text))
+    return sections
+
+
+def _xml_text(data: bytes) -> str:
+    root = ET.fromstring(data)
+    return " ".join(part.strip() for part in root.itertext() if part.strip())
+
+
+def _extract_hwp(
+    path: Path,
+    *,
+    automation_available: Callable[[], bool],
+    dispatch: Callable[[str], Any],
+) -> list[TextSection]:
+    try:
+        sections = _extract_hwp5(path)
+    except ContentSearchDependencyError:
+        raise
+    except Exception:
+        sections = []
+    if sections:
+        return sections
+
+    if not automation_available():
+        raise ContentSearchDependencyError("Hancom Office is required for HWP content search.")
+
+    app = None
+    uninitialize = _initialize_com()
+    try:
+        app = dispatch(HWP_APPLICATION_PROGID)
+        _open_hwp_document(app, path)
+        text = _read_hwp_text(app)
+    finally:
+        try:
+            if app is not None:
+                app.Quit()
+        finally:
+            uninitialize()
+
+    if not text:
+        return []
+    return [TextSection(kind="HWP", location="Document", text=text)]
+
+
+def _extract_hwp5(path: Path) -> list[TextSection]:
+    if not olefile.isOleFile(str(path)):
+        return []
+
+    sections: list[TextSection] = []
+    with olefile.OleFileIO(str(path)) as ole:
+        if not ole.exists("FileHeader"):
+            return []
+        header = ole.openstream("FileHeader").read()
+        properties = int.from_bytes(header[36:40], "little") if len(header) >= 40 else 0
+        if properties & 0x02:
+            raise ContentSearchDependencyError("Password-protected HWP files cannot be searched.")
+        compressed = bool(properties & 0x01)
+        section_paths = sorted(
+            (
+                item
+                for item in ole.listdir(streams=True, storages=False)
+                if len(item) == 2 and item[0] == "BodyText" and item[1].startswith("Section")
+            ),
+            key=lambda item: _hwp_section_index(item[1]),
+        )
+        for section_path in section_paths:
+            data = ole.openstream(section_path).read()
+            if compressed:
+                data = _decompress_hwp_stream(data)
+            text = _extract_hwp5_text_records(data)
+            if text:
+                sections.append(
+                    TextSection(
+                        kind="HWP",
+                        location="/".join(section_path),
+                        text=text,
+                    )
+                )
+    return sections
+
+
+def _hwp_section_index(name: str) -> int:
+    try:
+        return int(name.removeprefix("Section"))
+    except ValueError:
+        return 0
+
+
+def _decompress_hwp_stream(data: bytes) -> bytes:
+    try:
+        return zlib.decompress(data, -15)
+    except zlib.error:
+        return zlib.decompress(data)
+
+
+def _extract_hwp5_text_records(data: bytes) -> str:
+    offset = 0
+    paragraphs: list[str] = []
+    while offset + 4 <= len(data):
+        header = int.from_bytes(data[offset : offset + 4], "little")
+        offset += 4
+        tag_id = header & 0x3FF
+        size = (header >> 20) & 0xFFF
+        if size == 0xFFF:
+            if offset + 4 > len(data):
+                break
+            size = int.from_bytes(data[offset : offset + 4], "little")
+            offset += 4
+        payload = data[offset : offset + size]
+        offset += size
+        if tag_id == HWP5_PARA_TEXT_TAG:
+            text = _decode_hwp5_text_payload(payload)
+            if text:
+                paragraphs.append(text)
+    return "\n".join(paragraphs)
+
+
+def _decode_hwp5_text_payload(payload: bytes) -> str:
+    text = payload.decode("utf-16le", errors="ignore")
+    return "".join(
+        character if character >= " " or character in "\r\n\t" else " "
+        for character in text
+    ).strip()
+
+
+def _open_hwp_document(app: Any, path: Path) -> None:
+    try:
+        app.RegisterModule("FilePathCheckDLL", "FilePathCheckerModule")
+    except Exception:
+        pass
+
+    target = str(path.resolve())
+    errors: list[Exception] = []
+    for args in [(target,), (target, "HWP", "")]:
+        try:
+            opened = app.Open(*args)
+        except Exception as exc:
+            errors.append(exc)
+            continue
+        if opened is not False:
+            return
+        errors.append(RuntimeError("HWP file could not be opened."))
+    if errors:
+        raise RuntimeError(f"HWP file could not be opened: {_exception_message(errors[-1])}")
+    raise RuntimeError("HWP file could not be opened.")
+
+
+def _read_hwp_text(app: Any) -> str:
+    text = _read_hwp_text_file(app)
+    if text:
+        return text
+    return _scan_hwp_text(app)
+
+
+def _read_hwp_text_file(app: Any) -> str:
+    get_text_file = getattr(app, "GetTextFile", None)
+    if not callable(get_text_file):
+        return ""
+    for args in [("TEXT",), ("TEXT", "")]:
+        try:
+            text = get_text_file(*args)
+        except Exception:
+            continue
+        if text:
+            return str(text)
+        return ""
+    return ""
+
+
+def _scan_hwp_text(app: Any) -> str:
+    try:
+        app.InitScan(0x07, 0x0077, 0, 0, -1, -1)
+    except Exception:
+        app.InitScan()
+
+    parts: list[str] = []
+    try:
+        for _ in range(100000):
+            status, text = _normalize_hwp_text_result(app.GetText())
+            if text:
+                parts.append(text)
+            if status in {0, 1}:
+                break
+            if status in {101, 102}:
+                raise RuntimeError("HWP text scan failed.")
+        else:
+            raise RuntimeError("HWP text scan did not finish.")
+    finally:
+        try:
+            app.ReleaseScan()
+        except Exception:
+            pass
+    return "".join(parts)
+
+
+def _normalize_hwp_text_result(result: Any) -> tuple[int | None, str]:
+    if isinstance(result, tuple):
+        if len(result) >= 2:
+            return _coerce_status(result[0]), "" if result[1] is None else str(result[1])
+        if len(result) == 1:
+            return _coerce_status(result[0]), ""
+    if result is None:
+        return 0, ""
+    return None, str(result)
+
+
+def _coerce_status(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _search_sections(path: Path, sections: list[TextSection], query_normalized: str) -> list[SearchResult]:
     matches: list[SearchResult] = []
     for section in sections:
@@ -184,7 +638,13 @@ def _search_sections(path: Path, sections: list[TextSection], query_normalized: 
     return matches
 
 
-def _search_ocr(path: Path, query_normalized: str, executable: str | None, runner) -> list[SearchResult]:
+def _search_ocr(
+    path: Path,
+    query_normalized: str,
+    executable: str | None,
+    runner,
+    pdf_page_renderer: PdfPageRenderer | None = None,
+) -> list[SearchResult]:
     if not executable:
         return [
             SearchResult(
@@ -197,7 +657,21 @@ def _search_ocr(path: Path, query_normalized: str, executable: str | None, runne
             )
         ]
     try:
-        text = run_tesseract_ocr(path, executable=executable, runner=runner)
+        if path.suffix.lower() in PDF_SUFFIXES:
+            sections = run_pdf_tesseract_ocr(
+                path,
+                executable=executable,
+                runner=runner,
+                page_renderer=pdf_page_renderer,
+            )
+        else:
+            sections = [
+                TextSection(
+                    kind="OCR",
+                    location="OCR",
+                    text=run_tesseract_ocr(path, executable=executable, runner=runner),
+                )
+            ]
     except OSError as exc:
         return [
             SearchResult(
@@ -209,23 +683,17 @@ def _search_ocr(path: Path, query_normalized: str, executable: str | None, runne
                 message=str(exc),
             )
         ]
-    if query_normalized not in text.lower():
-        return [
-            SearchResult(
-                source=path,
-                kind="OCR",
-                location="OCR",
-                snippet="",
-                status="no_match",
-            )
-        ]
+    matched = _search_sections(path, sections, query_normalized)
+    if matched:
+        return matched
+    location = "OCR" if path.suffix.lower() not in PDF_SUFFIXES else "OCR"
     return [
         SearchResult(
             source=path,
             kind="OCR",
-            location="OCR",
-            snippet=_snippet(text, query_normalized),
-            status="matched",
+            location=location,
+            snippet="",
+            status="no_match",
         )
     ]
 
@@ -240,7 +708,7 @@ def _snippet(text: str, query_normalized: str) -> str:
     return " ".join(text[start:end].strip().split())
 
 
-def _kind_for_path(path: Path) -> str:
+def kind_for_path(path: Path) -> str:
     suffix = path.suffix.lower()
     if suffix in TEXT_SUFFIXES:
         return "Text"
@@ -250,6 +718,18 @@ def _kind_for_path(path: Path) -> str:
         return "DOCX"
     if suffix in XLSX_SUFFIXES:
         return "XLSX"
+    if suffix in PPTX_SUFFIXES:
+        return "PPTX"
+    if suffix in PPT_SUFFIXES:
+        return "PPT"
+    if suffix in HWPX_SUFFIXES:
+        return "HWPX"
+    if suffix in HWP_SUFFIXES:
+        return "HWP"
     if suffix in IMAGE_SUFFIXES:
         return "Image"
     return "Unknown"
+
+
+def _kind_for_path(path: Path) -> str:
+    return kind_for_path(path)

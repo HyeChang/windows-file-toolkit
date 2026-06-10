@@ -19,7 +19,45 @@ def test_window_default_options_are_balanced(monkeypatch):
     app()
     window = MainWindow()
 
+    assert window.compression_level_combo.currentData() == "balanced"
     assert window.current_options() == CompressionOptions()
+
+
+def test_window_compression_level_presets_update_advanced_controls(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    app()
+    window = MainWindow()
+
+    window.compression_level_combo.setCurrentIndex(window.compression_level_combo.findData("maximum"))
+
+    assert window.current_options() == CompressionOptions(
+        max_image_dimension=800,
+        jpeg_quality=50,
+        pdf_preset="screen",
+    )
+
+    window.compression_level_combo.setCurrentIndex(window.compression_level_combo.findData("high_quality"))
+
+    assert window.current_options() == CompressionOptions(
+        max_image_dimension=None,
+        jpeg_quality=90,
+        pdf_preset="printer",
+    )
+
+
+def test_advanced_controls_can_override_selected_compression_level(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    app()
+    window = MainWindow()
+
+    window.compression_level_combo.setCurrentIndex(window.compression_level_combo.findData("maximum"))
+    window.jpeg_quality_combo.setCurrentIndex(window.jpeg_quality_combo.findData(65))
+
+    assert window.current_options() == CompressionOptions(
+        max_image_dimension=800,
+        jpeg_quality=65,
+        pdf_preset="screen",
+    )
 
 
 def test_window_builds_options_from_advanced_controls(monkeypatch):
@@ -98,20 +136,24 @@ def test_window_defaults_to_korean_language(monkeypatch):
     assert window.diagnostics_group.title() == "환경 진단"
     assert window.recheck_diagnostics_button.text() == "다시 확인"
     assert window.language_label.text() == "언어"
+    assert window.compression_level_label.text() == "압축률"
     assert window.image_size_label.text() == "이미지 크기"
     assert window.jpeg_quality_label.text() == "JPEG 품질"
     assert window.pdf_level_label.text() == "PDF 수준"
-    assert window.tools_menu.title() == "도구"
     assert window.ghostscript_install_action.text() == "Ghostscript 설치"
+    assert window.menuBar().actions() == []
     assert window.pdf_tool_status_label.text() == "PDF 압축 도구: 설치 필요"
     assert window.ghostscript_install_button.text() == "설치"
     assert window.ghostscript_install_button.isEnabled() is True
     assert window.cancel_button.text() == "취소"
     assert window.cancel_button.isEnabled() is False
     assert window.current_file_label.text() == "현재 파일: -"
-    assert window.summary_label.text() == "요약: 완료 0, 건너뜀 0, 실패 0, 총 절감 - (-)"
+    assert window.summary_label.text() == "요약: 완료 0, 압축 불필요 0, 건너뜀 0, 실패 0, 총 절감 - (-)"
     assert table_headers(window) == ["파일", "형식", "원본", "상태", "압축 후", "절감", "절감률", "출력"]
     assert item_text_for_data(window.image_dimension_combo, None) == "원본"
+    assert item_text_for_data(window.compression_level_combo, "high_quality") == "고품질"
+    assert item_text_for_data(window.compression_level_combo, "balanced") == "균형"
+    assert item_text_for_data(window.compression_level_combo, "maximum") == "최대 압축"
     assert item_text_for_data(window.pdf_preset_combo, "screen") == "화면용"
     assert window.status_label.text() == "파일을 추가하세요."
 
@@ -142,18 +184,22 @@ def test_window_switches_visible_text_to_english(monkeypatch):
     assert window.diagnostics_group.title() == "Environment"
     assert window.recheck_diagnostics_button.text() == "Recheck"
     assert window.language_label.text() == "Language"
+    assert window.compression_level_label.text() == "Compression"
     assert window.image_size_label.text() == "Image size"
     assert window.jpeg_quality_label.text() == "JPEG quality"
     assert window.pdf_level_label.text() == "PDF level"
-    assert window.tools_menu.title() == "Tools"
     assert window.ghostscript_install_action.text() == "Install Ghostscript"
+    assert window.menuBar().actions() == []
     assert window.pdf_tool_status_label.text() == "PDF compression tool: install required"
     assert window.ghostscript_install_button.text() == "Install"
     assert window.cancel_button.text() == "Cancel"
     assert window.current_file_label.text() == "Current file: -"
-    assert window.summary_label.text() == "Summary: completed 0, skipped 0, failed 0, saved - (-)"
+    assert window.summary_label.text() == "Summary: completed 0, not needed 0, skipped 0, failed 0, saved - (-)"
     assert table_headers(window) == ["File", "Type", "Original", "Status", "Compressed", "Saved", "Rate", "Output"]
     assert item_text_for_data(window.image_dimension_combo, None) == "Original"
+    assert item_text_for_data(window.compression_level_combo, "high_quality") == "High quality"
+    assert item_text_for_data(window.compression_level_combo, "balanced") == "Balanced"
+    assert item_text_for_data(window.compression_level_combo, "maximum") == "Maximum"
     assert item_text_for_data(window.pdf_preset_combo, "screen") == "Screen"
     assert window.status_label.text() == "Add files to start."
 
@@ -175,6 +221,25 @@ def test_status_column_is_localized(monkeypatch):
 
     assert window.table.item(0, 3).text() == "Pending"
     assert window.status_label.text() == "1 file(s) ready."
+
+
+def test_not_needed_status_column_is_localized(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    app()
+    window = MainWindow()
+    source = Path(".worktrees/file-compressor-impl/.test-output/ui-not-needed/input.pdf")
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_bytes(b"%PDF-1.4")
+    window.add_files([source])
+    window.jobs[0].status = "not_needed"
+
+    window.refresh_table()
+
+    assert window.table.item(0, 3).text() == "압축 불필요"
+
+    window.language_combo.setCurrentIndex(window.language_combo.findData("en"))
+
+    assert window.table.item(0, 3).text() == "Not needed"
 
 
 def test_pdf_tool_status_shows_available_when_ghostscript_exists(monkeypatch):
@@ -404,7 +469,7 @@ def test_clear_jobs_resets_list_and_progress(monkeypatch):
     assert window.jobs == []
     assert window.table.rowCount() == 0
     assert window.progress_bar.value() == 0
-    assert window.summary_label.text() == "요약: 완료 0, 건너뜀 0, 실패 0, 총 절감 - (-)"
+    assert window.summary_label.text() == "요약: 완료 0, 압축 불필요 0, 건너뜀 0, 실패 0, 총 절감 - (-)"
     assert window.status_label.text() == "파일을 추가하세요."
 
 
@@ -439,7 +504,7 @@ def test_compress_jobs_updates_progress_and_summary(monkeypatch):
     assert window.current_file_label.text() == "현재 파일: -"
     assert window.table.item(0, 5).text() == "1000 B"
     assert window.table.item(0, 6).text() == "50.0%"
-    assert window.summary_label.text() == "요약: 완료 2, 건너뜀 0, 실패 0, 총 절감 2.0 KB (50.0%)"
+    assert window.summary_label.text() == "요약: 완료 2, 압축 불필요 0, 건너뜀 0, 실패 0, 총 절감 2.0 KB (50.0%)"
 
 
 def test_cancel_button_stops_before_next_file(monkeypatch):

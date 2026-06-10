@@ -26,6 +26,7 @@ def test_job_status_values_are_stable_for_ui():
         "pending",
         "processing",
         "completed",
+        "not_needed",
         "skipped",
         "failed",
     ]

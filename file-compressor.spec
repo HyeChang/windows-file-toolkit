@@ -1,10 +1,23 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+from pathlib import Path
+
+
+datas = []
+jpegtran_dir = Path("tools/jpegtran")
+jpegtran_source = Path("tools/jpegtran/jpegtran.exe")
+jpegtran_dll = Path("tools/jpegtran/jpeg62.dll")
+if jpegtran_source.exists():
+    for source in (jpegtran_source, jpegtran_dll, Path("tools/jpegtran/LICENSE-libjpeg-turbo.md")):
+        if source.exists():
+            datas.append((str(source), "tools/jpegtran"))
+
+
 a = Analysis(
     ["src/file_compressor_app/main.py"],
     pathex=["src"],
     binaries=[],
-    datas=[],
+    datas=datas,
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

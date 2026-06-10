@@ -1,4 +1,5 @@
 from pathlib import Path
+import shutil
 import subprocess
 
 from file_compressor.dependencies import DependencyStatus, detect_ghostscript
@@ -84,6 +85,19 @@ def compress_pdf(
             source=source,
             original_size=original_size,
             message=completed.stderr.strip() or "Ghostscript failed.",
+        )
+
+    compressed_size = temporary.stat().st_size
+    if compressed_size >= original_size:
+        temporary.unlink()
+        shutil.copy2(source, output)
+        return CompressionResult(
+            status=JobStatus.NOT_NEEDED,
+            source=source,
+            output=output,
+            original_size=original_size,
+            compressed_size=None,
+            message="Compression unnecessary; the compressed PDF would be larger than the original.",
         )
 
     try:

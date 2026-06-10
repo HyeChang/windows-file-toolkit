@@ -21,6 +21,22 @@ def test_file_job_displays_savings_amount_and_rate():
     assert job.savings_rate_text == "50.0%"
 
 
+def test_file_job_hides_savings_when_job_was_skipped_with_output_copy():
+    job = FileJob(
+        path=Path("report.hwp"),
+        status=JobStatus.SKIPPED.value,
+        original_size=2000,
+        compressed_size=None,
+        output_path=Path("report_compressed.hwp"),
+        message="copied original",
+    )
+
+    assert job.compressed_size_text == "-"
+    assert job.savings_size_text == "-"
+    assert job.savings_rate_text == "-"
+    assert job.output_text == "report_compressed.hwp"
+
+
 def test_result_to_job_copies_output_and_status():
     result = CompressionResult(
         status=JobStatus.COMPLETED,
@@ -64,14 +80,16 @@ def test_summarize_jobs_counts_statuses_and_total_savings():
             original_size=2000,
             compressed_size=1000,
         ),
+        FileJob(path=Path("not-needed.pdf"), status="not_needed", original_size=300),
         FileJob(path=Path("skipped.pdf"), status="skipped", original_size=500),
         FileJob(path=Path("failed.pdf"), status="failed", original_size=700),
     ]
 
     summary = summarize_jobs(jobs)
 
-    assert summary.total == 3
+    assert summary.total == 4
     assert summary.completed == 1
+    assert summary.not_needed == 1
     assert summary.skipped == 1
     assert summary.failed == 1
     assert summary.original_size == 2000

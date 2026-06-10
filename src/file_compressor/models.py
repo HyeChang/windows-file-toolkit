@@ -16,6 +16,7 @@ class JobStatus(Enum):
     PENDING = "pending"
     PROCESSING = "processing"
     COMPLETED = "completed"
+    NOT_NEEDED = "not_needed"
     SKIPPED = "skipped"
     FAILED = "failed"
 
@@ -25,6 +26,21 @@ class CompressionOptions:
     max_image_dimension: int | None = 1600
     jpeg_quality: int = 78
     pdf_preset: str = "screen"
+
+
+COMPRESSION_LEVEL_PRESETS = {
+    "high_quality": CompressionOptions(
+        max_image_dimension=None,
+        jpeg_quality=90,
+        pdf_preset="printer",
+    ),
+    "balanced": CompressionOptions(),
+    "maximum": CompressionOptions(
+        max_image_dimension=800,
+        jpeg_quality=50,
+        pdf_preset="screen",
+    ),
+}
 
 
 @dataclass(frozen=True)

@@ -71,6 +71,7 @@ class FileJob:
 class CompressionSummary:
     total: int
     completed: int
+    not_needed: int
     skipped: int
     failed: int
     original_size: int | None
@@ -112,6 +113,7 @@ def summarize_jobs(jobs: list[FileJob]) -> CompressionSummary:
     return CompressionSummary(
         total=len(jobs),
         completed=sum(1 for job in jobs if job.status == JobStatus.COMPLETED.value),
+        not_needed=sum(1 for job in jobs if job.status == JobStatus.NOT_NEEDED.value),
         skipped=sum(1 for job in jobs if job.status == JobStatus.SKIPPED.value),
         failed=sum(1 for job in jobs if job.status == JobStatus.FAILED.value),
         original_size=original_size,

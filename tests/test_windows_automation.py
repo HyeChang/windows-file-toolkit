@@ -1,17 +1,29 @@
 from pathlib import Path
+import shutil
+import tomllib
 
 from file_compressor.compressors.windows_automation import (
     compress_hwp,
     compress_legacy_office,
+    default_hancom_available,
     is_progid_registered,
+    is_pywin32_available,
 )
 from file_compressor.models import CompressionOptions, CompressionResult, JobStatus
 
 
 def case_dir(name: str) -> Path:
     path = Path(".worktrees/file-compressor-impl/.test-output") / name
+    if path.exists():
+        shutil.rmtree(path)
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def test_project_declares_pywin32_as_windows_runtime_dependency():
+    data = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+
+    assert 'pywin32>=306; platform_system == "Windows"' in data["project"]["dependencies"]
 
 
 def test_hwp_is_skipped_when_hancom_is_unavailable():
@@ -24,6 +36,42 @@ def test_hwp_is_skipped_when_hancom_is_unavailable():
 
     assert result.status is JobStatus.SKIPPED
     assert "Hancom Office" in result.message
+
+
+def test_hancom_availability_requires_pywin32_and_registered_progid():
+    assert (
+        default_hancom_available(
+            progid_registered=lambda: True,
+            pywin32_available=lambda: False,
+        )
+        is False
+    )
+    assert (
+        default_hancom_available(
+            progid_registered=lambda: False,
+            pywin32_available=lambda: True,
+        )
+        is False
+    )
+    assert (
+        default_hancom_available(
+            progid_registered=lambda: True,
+            pywin32_available=lambda: True,
+        )
+        is True
+    )
+
+
+def test_pywin32_availability_checks_win32com_client_import():
+    def missing_import(name):
+        raise ImportError(name)
+
+    def available_import(name):
+        assert name == "win32com.client"
+        return object()
+
+    assert is_pywin32_available(import_module=missing_import) is False
+    assert is_pywin32_available(import_module=available_import) is True
 
 
 def test_hwp_opens_and_saves_to_planned_output():
@@ -73,6 +121,137 @@ def test_hwp_opens_and_saves_to_planned_output():
     assert ("quit",) in events
 
 
+def test_hwp_registers_alternate_file_path_checker_module_name():
+    workdir = case_dir("hwp-register-alternate-module")
+    source = workdir / "doc.hwp"
+    source.write_bytes(b"hwp")
+    output = workdir / "out" / "doc.hwp"
+    events = []
+
+    class FakeHwp:
+        def RegisterModule(self, dll_name, module_name):
+            events.append(("register", dll_name, module_name))
+            return module_name == "FilePathCheckerModuleExample"
+
+        def Open(self, *args):
+            events.append(("open", args))
+            return True
+
+        def SaveAs(self, *args):
+            Path(args[0]).write_bytes(b"saved-hwp")
+            return True
+
+        def Quit(self):
+            events.append(("quit",))
+
+    result = compress_hwp(
+        source,
+        output,
+        automation_available=lambda: True,
+        dispatch=lambda progid: FakeHwp(),
+    )
+
+    assert result.status is JobStatus.COMPLETED
+    assert ("register", "FilePathCheckDLL", "FilePathCheckerModule") in events
+    assert ("register", "FilePathCheckDLL", "FilePathCheckerModuleExample") in events
+    assert any(event[0] == "open" for event in events)
+
+
+def test_hwp_manual_security_prompt_can_complete_when_module_is_unavailable():
+    workdir = case_dir("hwp-manual-security-approval")
+    source = workdir / "doc.hwp"
+    source.write_bytes(b"hwp-original")
+    output = workdir / "out" / "doc.hwp"
+    events = []
+
+    class FakeWindow:
+        Visible = False
+
+    class FakeWindows:
+        def __init__(self, window):
+            self.window = window
+
+        def Item(self, index):
+            events.append(("window", index))
+            return self.window
+
+    class FakeHwp:
+        def __init__(self):
+            self.window = FakeWindow()
+            self.XHwpWindows = FakeWindows(self.window)
+
+        def RegisterModule(self, dll_name, module_name):
+            events.append(("register", dll_name, module_name))
+            return False
+
+        def Open(self, *args):
+            events.append(("open", args, self.window.Visible))
+            if not self.window.Visible:
+                raise RuntimeError("security prompt was not visible")
+            return True
+
+        def SaveAs(self, *args):
+            events.append(("save_as", args))
+            Path(args[0]).write_bytes(b"saved-after-manual-approval")
+            return True
+
+        def Quit(self):
+            events.append(("quit",))
+
+    result = compress_hwp(
+        source,
+        output,
+        automation_available=lambda: True,
+        dispatch=lambda progid: FakeHwp(),
+    )
+
+    assert result.status is JobStatus.COMPLETED
+    assert result.original_size == len(b"hwp-original")
+    assert result.compressed_size == len(b"saved-after-manual-approval")
+    assert result.output == output
+    assert output.read_bytes() == b"saved-after-manual-approval"
+    assert "manual" in result.message
+    assert ("window", 0) in events
+    assert any(event[0] == "open" and event[2] is True for event in events)
+    assert ("quit",) in events
+
+
+def test_hwp_copies_original_when_manual_security_approval_fails():
+    workdir = case_dir("hwp-manual-security-approval-fails")
+    source = workdir / "doc.hwp"
+    source.write_bytes(b"hwp-original")
+    output = workdir / "out" / "doc.hwp"
+    events = []
+
+    class FakeHwp:
+        def RegisterModule(self, dll_name, module_name):
+            events.append(("register", dll_name, module_name))
+            return False
+
+        def Open(self, *args):
+            events.append(("open", args))
+            return False
+
+        def Quit(self):
+            events.append(("quit",))
+
+    result = compress_hwp(
+        source,
+        output,
+        automation_available=lambda: True,
+        dispatch=lambda progid: FakeHwp(),
+    )
+
+    assert result.status is JobStatus.SKIPPED
+    assert result.original_size == len(b"hwp-original")
+    assert result.compressed_size is None
+    assert result.output == output
+    assert output.read_bytes() == b"hwp-original"
+    assert "manual security approval" in result.message
+    assert any(event[0] == "open" for event in events)
+    assert ("quit",) in events
+
+
 def test_hwp_open_and_save_retry_with_format_arguments():
     workdir = case_dir("hwp-open-save-retry")
     source = workdir / "doc.hwp"
@@ -114,6 +293,163 @@ def test_hwp_open_and_save_retry_with_format_arguments():
     assert ("save_as", (str(output.resolve()), "HWP")) in events
     assert ("save_as", (str(output.resolve()), "HWP", "")) in events
     assert ("quit",) in events
+
+
+def test_hwp_open_retries_with_forceopen_argument():
+    workdir = case_dir("hwp-open-forceopen")
+    source = workdir / "doc.hwp"
+    source.write_bytes(b"hwp")
+    output = workdir / "out" / "doc.hwp"
+    events = []
+
+    class FakeHwp:
+        def RegisterModule(self, dll_name, module_name):
+            events.append(("register", dll_name, module_name))
+
+        def Open(self, *args):
+            events.append(("open", args))
+            if len(args) == 3 and "forceopen:true" in args[2]:
+                return True
+            return False
+
+        def SaveAs(self, *args):
+            events.append(("save_as", args))
+            Path(args[0]).write_bytes(b"saved-hwp")
+            return True
+
+        def Quit(self):
+            events.append(("quit",))
+
+    result = compress_hwp(
+        source,
+        output,
+        automation_available=lambda: True,
+        dispatch=lambda progid: FakeHwp(),
+    )
+
+    assert result.status is JobStatus.COMPLETED
+    assert ("open", (str(source.resolve()), "HWP", "forceopen:true")) in events
+    assert output.read_bytes() == b"saved-hwp"
+
+
+def test_hwp_save_as_false_is_success_when_output_was_created():
+    workdir = case_dir("hwp-save-false-created-output")
+    source = workdir / "doc.hwp"
+    source.write_bytes(b"hwp")
+    output = workdir / "out" / "doc.hwp"
+
+    class FakeHwp:
+        def RegisterModule(self, dll_name, module_name):
+            pass
+
+        def Open(self, *args):
+            return True
+
+        def SaveAs(self, *args):
+            Path(args[0]).write_bytes(b"saved-hwp")
+            return False
+
+        def Quit(self):
+            pass
+
+    result = compress_hwp(
+        source,
+        output,
+        automation_available=lambda: True,
+        dispatch=lambda progid: FakeHwp(),
+    )
+
+    assert result.status is JobStatus.COMPLETED
+    assert output.read_bytes() == b"saved-hwp"
+
+
+def test_hwp_save_uses_hwp_action_fallback_when_save_as_does_not_create_output():
+    workdir = case_dir("hwp-action-save-fallback")
+    source = workdir / "doc.hwp"
+    source.write_bytes(b"hwp")
+    output = workdir / "out" / "doc.hwp"
+    events = []
+
+    class FakeFileOpenSave:
+        def __init__(self):
+            self.HSet = object()
+            self.filename = ""
+            self.Format = ""
+
+    class FakeHAction:
+        def __init__(self, params):
+            self.params = params
+
+        def GetDefault(self, action_name, hset):
+            events.append(("get_default", action_name, hset))
+            return True
+
+        def Execute(self, action_name, hset):
+            events.append(("execute", action_name, hset, self.params.filename, self.params.Format))
+            Path(self.params.filename).write_bytes(b"saved-by-action")
+            return True
+
+    class FakeHwp:
+        def __init__(self):
+            self.HParameterSet = type("FakeParameterSet", (), {})()
+            self.HParameterSet.HFileOpenSave = FakeFileOpenSave()
+            self.HAction = FakeHAction(self.HParameterSet.HFileOpenSave)
+
+        def RegisterModule(self, dll_name, module_name):
+            pass
+
+        def Open(self, *args):
+            return True
+
+        def SaveAs(self, *args):
+            events.append(("save_as", args))
+            return False
+
+        def Quit(self):
+            pass
+
+    result = compress_hwp(
+        source,
+        output,
+        automation_available=lambda: True,
+        dispatch=lambda progid: FakeHwp(),
+    )
+
+    assert result.status is JobStatus.COMPLETED
+    assert output.read_bytes() == b"saved-by-action"
+    assert any(event[0] == "get_default" and event[1] == "FileSaveAs_S" for event in events)
+    assert any(event[0] == "execute" and event[3] == str(output.resolve()) for event in events)
+
+
+def test_hwp_quit_failure_does_not_mask_successful_save():
+    workdir = case_dir("hwp-quit-fails-after-save")
+    source = workdir / "doc.hwp"
+    source.write_bytes(b"hwp")
+    output = workdir / "out" / "doc.hwp"
+
+    class FakeHwp:
+        def RegisterModule(self, dll_name, module_name):
+            pass
+
+        def Open(self, *args):
+            return True
+
+        def SaveAs(self, *args):
+            Path(args[0]).write_bytes(b"saved-hwp")
+            return True
+
+        def Quit(self):
+            raise RuntimeError("quit failed")
+
+    result = compress_hwp(
+        source,
+        output,
+        automation_available=lambda: True,
+        dispatch=lambda progid: FakeHwp(),
+    )
+
+    assert result.status is JobStatus.COMPLETED
+    assert output.read_bytes() == b"saved-hwp"
 
 
 def test_hwp_returns_failed_and_quits_when_save_fails():

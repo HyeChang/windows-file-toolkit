@@ -78,7 +78,7 @@ def test_compress_pdf_removes_partial_output_when_ghostscript_fails(monkeypatch)
 def test_compress_pdf_removes_temp_output_when_final_replace_fails(monkeypatch):
     workdir = case_dir("pdf-replace-failure")
     source = workdir / "input.pdf"
-    source.write_bytes(b"%PDF-1.4")
+    source.write_bytes(b"%PDF-1.4 large enough to be replaced")
     output = workdir / "output.pdf"
 
     class Completed:
@@ -101,6 +101,58 @@ def test_compress_pdf_removes_temp_output_when_final_replace_fails(monkeypatch):
     assert result.status is JobStatus.FAILED
     assert not output.exists()
     assert not list(workdir.glob("*.tmp"))
+
+
+def test_compress_pdf_marks_unnecessary_when_ghostscript_output_is_larger(monkeypatch):
+    workdir = case_dir("pdf-larger-output")
+    source = workdir / "input.pdf"
+    source.write_bytes(b"small-pdf")
+    output = workdir / "output.pdf"
+
+    class Completed:
+        returncode = 0
+        stderr = ""
+
+    def fake_run(command, check, capture_output, text):
+        temporary_output = Path(command[-2].removeprefix("-sOutputFile="))
+        temporary_output.write_bytes(b"larger-pdf-output")
+        return Completed()
+
+    monkeypatch.setattr("file_compressor.compressors.pdf.subprocess.run", fake_run)
+
+    result = compress_pdf(source, output, dependency=DependencyStatus(True, "gs"))
+
+    assert result.status is JobStatus.NOT_NEEDED
+    assert result.output == output
+    assert result.original_size == len(b"small-pdf")
+    assert result.compressed_size is None
+    assert output.read_bytes() == b"small-pdf"
+    assert not list(workdir.glob("*.tmp"))
+    assert "Compression unnecessary" in result.message
+
+
+def test_compress_pdf_uses_ghostscript_output_when_it_is_smaller(monkeypatch):
+    workdir = case_dir("pdf-smaller-output")
+    source = workdir / "input.pdf"
+    source.write_bytes(b"large-pdf-content")
+    output = workdir / "output.pdf"
+
+    class Completed:
+        returncode = 0
+        stderr = ""
+
+    def fake_run(command, check, capture_output, text):
+        temporary_output = Path(command[-2].removeprefix("-sOutputFile="))
+        temporary_output.write_bytes(b"small")
+        return Completed()
+
+    monkeypatch.setattr("file_compressor.compressors.pdf.subprocess.run", fake_run)
+
+    result = compress_pdf(source, output, dependency=DependencyStatus(True, "gs"))
+
+    assert result.status is JobStatus.COMPLETED
+    assert result.compressed_size == len(b"small")
+    assert output.read_bytes() == b"small"
 
 
 def test_compress_pdf_passes_selected_preset_to_ghostscript(monkeypatch):

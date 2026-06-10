@@ -1,10 +1,13 @@
 from pathlib import Path
 import shutil
+from threading import Event
+import time
 
 from PySide6.QtCore import Qt, QItemSelectionModel
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QProgressBar
 from pypdf import PdfReader, PdfWriter
 
+from file_compressor.content_search import SearchResult
 from file_compressor.dependencies import DependencyStatus, TESSERACT_DOWNLOAD_URL
 from file_compressor_app.ui import MainWindow
 
@@ -48,6 +51,16 @@ def select_rows(table, rows: list[int]):
         table.setCurrentCell(rows[-1], 0)
 
 
+def wait_until(predicate, *, timeout: float = 5.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        app().processEvents()
+        if predicate():
+            return
+        time.sleep(0.01)
+    raise AssertionError("condition was not met before timeout")
+
+
 def check_page_rows(table, rows: list[int]):
     for row in range(table.rowCount()):
         table.item(row, 0).setCheckState(Qt.CheckState.Unchecked)
@@ -84,13 +97,24 @@ def test_main_window_includes_pdf_tools_and_search_tabs(monkeypatch):
         "파일 이름 변경",
         "파일 자동 분류",
         "파일 날짜 변경",
+        "이미지 회전",
+        "이미지 비율 분류",
         "PDF 도구",
         "파일 내용 검색",
     ]
 
     window.language_combo.setCurrentIndex(window.language_combo.findData("en"))
 
-    assert tab_labels(window) == ["Compression", "Rename", "Classify", "Dates", "PDF Tools", "Search"]
+    assert tab_labels(window) == [
+        "Compression",
+        "Rename",
+        "Classify",
+        "Dates",
+        "Image Rotate",
+        "Image Ratio",
+        "PDF Tools",
+        "Search",
+    ]
 
 
 def test_pdf_tools_tab_extracts_selected_pages(monkeypatch):
@@ -273,10 +297,81 @@ def test_search_tab_finds_text_file_content(monkeypatch):
     window.search_tab.add_paths([source])
     window.search_tab.query_edit.setText("needle")
     window.search_tab.run_search()
+    wait_until(lambda: window.search_tab.search_thread is None)
 
     assert window.search_tab.table.item(0, 0).text() == "memo.txt"
     assert window.search_tab.table.item(0, 2).text() == "Line 1"
     assert window.search_tab.table.item(0, 4).text() == "일치"
+
+
+def test_search_tab_shows_row_progress_while_search_runs(monkeypatch):
+    window = make_window(monkeypatch)
+    workdir = case_dir("ui-search-progress")
+    source = workdir / "memo.txt"
+    source.write_text("needle appears here", encoding="utf-8")
+    started = Event()
+    proceed = Event()
+
+    def fake_search_file(path, query, **kwargs):
+        started.set()
+        proceed.wait(timeout=5)
+        return [
+            SearchResult(
+                source=path,
+                kind="Text",
+                location="Line 1",
+                snippet="needle appears here",
+                status="matched",
+            )
+        ]
+
+    monkeypatch.setattr("file_compressor_app.pdf_search_ui.search_file", fake_search_file)
+
+    window.search_tab.add_paths([source])
+    window.search_tab.query_edit.setText("needle")
+    window.search_tab.run_search()
+    assert started.wait(timeout=5)
+    app().processEvents()
+
+    assert window.search_tab.search_button.isEnabled() is False
+    assert window.search_tab.search_progress_bar.maximum() == 1
+    assert window.search_tab.search_progress_bar.value() == 0
+    assert isinstance(window.search_tab.table.cellWidget(0, 4), QProgressBar)
+
+    proceed.set()
+    wait_until(lambda: window.search_tab.search_thread is None)
+
+    assert window.search_tab.search_progress_bar.value() == 1
+    assert window.search_tab.table.item(0, 4).text() == "일치"
+
+
+def test_search_tab_shows_failure_message_in_snippet_column(monkeypatch):
+    window = make_window(monkeypatch)
+    workdir = case_dir("ui-search-failure-message")
+    source = workdir / "broken.hwp"
+    source.write_bytes(b"hwp")
+
+    def fake_search_file(path, query, **kwargs):
+        return [
+            SearchResult(
+                source=path,
+                kind="HWP",
+                location="-",
+                snippet="",
+                status="failed",
+                message="HWP text extraction failed: sample error",
+            )
+        ]
+
+    monkeypatch.setattr("file_compressor_app.pdf_search_ui.search_file", fake_search_file)
+
+    window.search_tab.add_paths([source])
+    window.search_tab.query_edit.setText("needle")
+    window.search_tab.run_search()
+    wait_until(lambda: window.search_tab.search_thread is None)
+
+    assert window.search_tab.table.item(0, 3).text() == "HWP text extraction failed: sample error"
+    assert window.search_tab.table.item(0, 4).text() == "실패"
 
 
 def test_search_tab_shows_ocr_status_and_opens_install_page(monkeypatch):

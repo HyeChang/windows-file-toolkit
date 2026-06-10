@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtGui import QAction, QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 from file_compressor.dependencies import GHOSTSCRIPT_DOWNLOAD_URL, detect_ghostscript
 from file_compressor.discovery import discover_supported_files
 from file_compressor.engine import compress_file
-from file_compressor.models import CompressionJob, CompressionOptions, JobStatus
+from file_compressor.models import COMPRESSION_LEVEL_PRESETS, CompressionJob, CompressionOptions, JobStatus
 from file_compressor.compressors.windows_automation import (
     default_excel_available,
     default_hancom_available,
@@ -34,7 +34,14 @@ from file_compressor.planning import (
     planned_batch_output_path,
     planned_output_folder_path,
 )
-from file_compressor_app.file_tools_ui import ClassifyToolWidget, DateChangeToolWidget, RenameToolWidget
+from file_compressor_app.file_tools_ui import (
+    ClassifyToolWidget,
+    DateChangeToolWidget,
+    ImageRatioClassifyToolWidget,
+    ImageRotateToolWidget,
+    RenameToolWidget,
+    _local_drop_paths,
+)
 from file_compressor_app.pdf_search_ui import ContentSearchWidget, PdfToolsWidget
 from file_compressor_app.view_model import FileJob, result_to_job, summarize_jobs
 
@@ -46,6 +53,8 @@ TRANSLATIONS = {
         "tab_rename": "파일 이름 변경",
         "tab_classify": "파일 자동 분류",
         "tab_dates": "파일 날짜 변경",
+        "tab_image_rotate": "이미지 회전",
+        "tab_image_ratio": "이미지 비율 분류",
         "tab_pdf_tools": "PDF 도구",
         "tab_search": "파일 내용 검색",
         "add_files": "파일 추가",
@@ -73,6 +82,10 @@ TRANSLATIONS = {
         "ghostscript_install_button": "설치",
         "ghostscript_installed_button": "설치됨",
         "language": "언어",
+        "compression_level": "압축률",
+        "compression_high_quality": "고품질",
+        "compression_balanced": "균형",
+        "compression_maximum": "최대 압축",
         "image_size": "이미지 크기",
         "jpeg_quality": "JPEG 품질",
         "pdf_level": "PDF 수준",
@@ -84,10 +97,10 @@ TRANSLATIONS = {
         "cancelled_status": "압축 취소됨. {done}/{total}개 처리됨.",
         "current_file_idle": "현재 파일: -",
         "current_file": "현재 파일: {name}",
-        "summary": "요약: 완료 {completed}, 건너뜀 {skipped}, 실패 {failed}, 총 절감 {saved} ({rate})",
+        "summary": "요약: 완료 {completed}, 압축 불필요 {not_needed}, 건너뜀 {skipped}, 실패 {failed}, 총 절감 {saved} ({rate})",
         "select_files": "파일 선택",
         "select_folder": "폴더 선택",
-        "file_filter": "문서 (*.xlsx *.xlsm *.pptx *.pptm *.pdf *.hwpx *.hwp *.xls *.ppt);;모든 파일 (*.*)",
+        "file_filter": "문서 (*.docx *.docm *.xlsx *.xlsm *.pptx *.pptm *.pdf *.hwpx *.hwp *.xls *.ppt);;모든 파일 (*.*)",
         "original": "원본",
         "screen": "화면용",
         "ebook": "전자책",
@@ -96,6 +109,7 @@ TRANSLATIONS = {
         "pending": "대기",
         "processing": "처리 중",
         "completed": "완료",
+        "not_needed": "압축 불필요",
         "skipped": "건너뜀",
         "failed": "실패",
     },
@@ -105,6 +119,8 @@ TRANSLATIONS = {
         "tab_rename": "Rename",
         "tab_classify": "Classify",
         "tab_dates": "Dates",
+        "tab_image_rotate": "Image Rotate",
+        "tab_image_ratio": "Image Ratio",
         "tab_pdf_tools": "PDF Tools",
         "tab_search": "Search",
         "add_files": "Add files",
@@ -132,6 +148,10 @@ TRANSLATIONS = {
         "ghostscript_install_button": "Install",
         "ghostscript_installed_button": "Installed",
         "language": "Language",
+        "compression_level": "Compression",
+        "compression_high_quality": "High quality",
+        "compression_balanced": "Balanced",
+        "compression_maximum": "Maximum",
         "image_size": "Image size",
         "jpeg_quality": "JPEG quality",
         "pdf_level": "PDF level",
@@ -143,10 +163,10 @@ TRANSLATIONS = {
         "cancelled_status": "Compression cancelled. {done}/{total} file(s) processed.",
         "current_file_idle": "Current file: -",
         "current_file": "Current file: {name}",
-        "summary": "Summary: completed {completed}, skipped {skipped}, failed {failed}, saved {saved} ({rate})",
+        "summary": "Summary: completed {completed}, not needed {not_needed}, skipped {skipped}, failed {failed}, saved {saved} ({rate})",
         "select_files": "Select files",
         "select_folder": "Select folder",
-        "file_filter": "Documents (*.xlsx *.xlsm *.pptx *.pptm *.pdf *.hwpx *.hwp *.xls *.ppt);;All files (*.*)",
+        "file_filter": "Documents (*.docx *.docm *.xlsx *.xlsm *.pptx *.pptm *.pdf *.hwpx *.hwp *.xls *.ppt);;All files (*.*)",
         "original": "Original",
         "screen": "Screen",
         "ebook": "Ebook",
@@ -155,6 +175,7 @@ TRANSLATIONS = {
         "pending": "Pending",
         "processing": "Processing",
         "completed": "Completed",
+        "not_needed": "Not needed",
         "skipped": "Skipped",
         "failed": "Failed",
     },
@@ -166,22 +187,30 @@ class DropTable(QTableWidget):
         super().__init__(0, 8)
         self.on_files = on_files
         self.setAcceptDrops(True)
+        self.viewport().setAcceptDrops(True)
+        self.setDragDropMode(QAbstractItemView.DragDropMode.DropOnly)
+        self.setDefaultDropAction(Qt.DropAction.CopyAction)
         self.setHorizontalHeaderLabels(["File", "Type", "Original", "Status", "Compressed", "Saved", "Rate", "Output"])
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
 
     def dragEnterEvent(self, event):
-        if event.mimeData().hasUrls():
-            event.acceptProposedAction()
+        if _local_drop_paths(event):
+            event.setDropAction(Qt.DropAction.CopyAction)
+            event.accept()
 
     def dragMoveEvent(self, event):
-        if event.mimeData().hasUrls():
-            event.acceptProposedAction()
+        if _local_drop_paths(event):
+            event.setDropAction(Qt.DropAction.CopyAction)
+            event.accept()
 
     def dropEvent(self, event):
-        paths = [Path(url.toLocalFile()) for url in event.mimeData().urls() if url.isLocalFile()]
-        self.on_files(paths)
-        event.acceptProposedAction()
+        paths = _local_drop_paths(event)
+        if not paths:
+            return
+        event.setDropAction(Qt.DropAction.CopyAction)
+        event.accept()
+        QTimer.singleShot(0, lambda paths=paths: self.on_files(paths))
 
 
 class MainWindow(QMainWindow):
@@ -200,6 +229,7 @@ class MainWindow(QMainWindow):
         self._cancel_requested = False
         self._current_file_name: str | None = None
         self.output_folder: Path | None = None
+        self.setAcceptDrops(True)
 
         self.table = DropTable(self.add_paths)
         self.status_label = QLabel()
@@ -224,10 +254,12 @@ class MainWindow(QMainWindow):
             "hwp": QLabel(),
         }
         self.language_label = QLabel()
+        self.compression_level_label = QLabel()
         self.image_size_label = QLabel()
         self.jpeg_quality_label = QLabel()
         self.pdf_level_label = QLabel()
         self.language_combo = QComboBox()
+        self.compression_level_combo = QComboBox()
         self.image_dimension_combo = QComboBox()
         self.jpeg_quality_combo = QComboBox()
         self.pdf_preset_combo = QComboBox()
@@ -246,6 +278,7 @@ class MainWindow(QMainWindow):
         self.ghostscript_install_button.clicked.connect(self.open_ghostscript_download)
         self.recheck_diagnostics_button.clicked.connect(self.refresh_diagnostics)
         self.language_combo.currentIndexChanged.connect(self.change_language)
+        self.compression_level_combo.currentIndexChanged.connect(self.apply_compression_level_preset)
         self.cancel_button.setEnabled(False)
         self.progress_bar.setRange(0, 1)
         self.progress_bar.setValue(0)
@@ -265,6 +298,8 @@ class MainWindow(QMainWindow):
         settings_layout = QHBoxLayout()
         settings_layout.addWidget(self.language_label)
         settings_layout.addWidget(self.language_combo)
+        settings_layout.addWidget(self.compression_level_label)
+        settings_layout.addWidget(self.compression_level_combo)
         settings_layout.addWidget(self.image_size_label)
         settings_layout.addWidget(self.image_dimension_combo)
         settings_layout.addWidget(self.jpeg_quality_label)
@@ -303,17 +338,49 @@ class MainWindow(QMainWindow):
         self.rename_tab = RenameToolWidget(language=self.language)
         self.classify_tab = ClassifyToolWidget(language=self.language)
         self.date_tab = DateChangeToolWidget(language=self.language)
+        self.image_rotate_tab = ImageRotateToolWidget(language=self.language)
+        self.image_ratio_tab = ImageRatioClassifyToolWidget(language=self.language)
         self.pdf_tools_tab = PdfToolsWidget(language=self.language)
         self.search_tab = ContentSearchWidget(language=self.language)
         self.tabs = QTabWidget()
+        self.tabs.setAcceptDrops(True)
         self.tabs.addTab(self.compression_tab, "")
         self.tabs.addTab(self.rename_tab, "")
         self.tabs.addTab(self.classify_tab, "")
         self.tabs.addTab(self.date_tab, "")
+        self.tabs.addTab(self.image_rotate_tab, "")
+        self.tabs.addTab(self.image_ratio_tab, "")
         self.tabs.addTab(self.pdf_tools_tab, "")
         self.tabs.addTab(self.search_tab, "")
         self.setCentralWidget(self.tabs)
         self.apply_language()
+
+    def dragEnterEvent(self, event):
+        if _local_drop_paths(event):
+            event.setDropAction(Qt.DropAction.CopyAction)
+            event.accept()
+
+    def dragMoveEvent(self, event):
+        if _local_drop_paths(event):
+            event.setDropAction(Qt.DropAction.CopyAction)
+            event.accept()
+
+    def dropEvent(self, event):
+        paths = _local_drop_paths(event)
+        if not paths:
+            return
+        event.setDropAction(Qt.DropAction.CopyAction)
+        event.accept()
+        QTimer.singleShot(0, lambda paths=paths: self._handle_tab_drop(paths))
+
+    def _handle_tab_drop(self, paths: list[Path]):
+        current = self.tabs.currentWidget()
+        if current is self.compression_tab:
+            self.add_paths(paths)
+        elif current is self.image_ratio_tab:
+            self.image_ratio_tab.add_paths(paths)
+        elif hasattr(current, "add_paths"):
+            current.add_paths(paths)
 
     def tr(self, key: str) -> str | list[str]:
         return TRANSLATIONS[self.language][key]
@@ -324,15 +391,23 @@ class MainWindow(QMainWindow):
         self.language_combo.setCurrentIndex(self.language_combo.findData("ko"))
 
     def _setup_option_controls(self):
+        self._set_compression_level_items("balanced")
         self._set_image_dimension_items(1600)
         self._set_jpeg_quality_items(78)
         self._set_pdf_preset_items("screen")
 
     def _setup_menu(self):
-        self.tools_menu = self.menuBar().addMenu("")
         self.ghostscript_install_action = QAction(self)
         self.ghostscript_install_action.triggered.connect(self.open_ghostscript_download)
-        self.tools_menu.addAction(self.ghostscript_install_action)
+
+    def _set_compression_level_items(self, selected):
+        self.compression_level_combo.blockSignals(True)
+        self.compression_level_combo.clear()
+        self.compression_level_combo.addItem(str(self.tr("compression_high_quality")), "high_quality")
+        self.compression_level_combo.addItem(str(self.tr("compression_balanced")), "balanced")
+        self.compression_level_combo.addItem(str(self.tr("compression_maximum")), "maximum")
+        self.compression_level_combo.blockSignals(False)
+        self.compression_level_combo.setCurrentIndex(self.compression_level_combo.findData(selected))
 
     def _set_image_dimension_items(self, selected):
         self.image_dimension_combo.blockSignals(True)
@@ -366,7 +441,19 @@ class MainWindow(QMainWindow):
         self.language = self.language_combo.currentData()
         self.apply_language()
 
+    def apply_compression_level_preset(self):
+        options = COMPRESSION_LEVEL_PRESETS.get(self.compression_level_combo.currentData())
+        if options is None:
+            return
+
+        self.image_dimension_combo.setCurrentIndex(
+            self.image_dimension_combo.findData(options.max_image_dimension)
+        )
+        self.jpeg_quality_combo.setCurrentIndex(self.jpeg_quality_combo.findData(options.jpeg_quality))
+        self.pdf_preset_combo.setCurrentIndex(self.pdf_preset_combo.findData(options.pdf_preset))
+
     def apply_language(self):
+        selected_compression_level = self.compression_level_combo.currentData()
         selected_dimension = self.image_dimension_combo.currentData()
         selected_quality = self.jpeg_quality_combo.currentData()
         selected_pdf_preset = self.pdf_preset_combo.currentData()
@@ -376,11 +463,15 @@ class MainWindow(QMainWindow):
         self.tabs.setTabText(1, str(self.tr("tab_rename")))
         self.tabs.setTabText(2, str(self.tr("tab_classify")))
         self.tabs.setTabText(3, str(self.tr("tab_dates")))
-        self.tabs.setTabText(4, str(self.tr("tab_pdf_tools")))
-        self.tabs.setTabText(5, str(self.tr("tab_search")))
+        self.tabs.setTabText(4, str(self.tr("tab_image_rotate")))
+        self.tabs.setTabText(5, str(self.tr("tab_image_ratio")))
+        self.tabs.setTabText(6, str(self.tr("tab_pdf_tools")))
+        self.tabs.setTabText(7, str(self.tr("tab_search")))
         self.rename_tab.set_language(self.language)
         self.classify_tab.set_language(self.language)
         self.date_tab.set_language(self.language)
+        self.image_rotate_tab.set_language(self.language)
+        self.image_ratio_tab.set_language(self.language)
         self.pdf_tools_tab.set_language(self.language)
         self.search_tab.set_language(self.language)
         self.add_button.setText(str(self.tr("add_files")))
@@ -390,17 +481,18 @@ class MainWindow(QMainWindow):
         self.clear_list_button.setText(str(self.tr("clear_list")))
         self.start_button.setText(str(self.tr("start_compression")))
         self.cancel_button.setText(str(self.tr("cancel")))
-        self.tools_menu.setTitle(str(self.tr("tools")))
         self.ghostscript_install_action.setText(str(self.tr("install_ghostscript")))
         self.settings_group.setTitle(str(self.tr("settings")))
         self.diagnostics_group.setTitle(str(self.tr("diagnostics")))
         self.recheck_diagnostics_button.setText(str(self.tr("recheck_diagnostics")))
         self.language_label.setText(str(self.tr("language")))
+        self.compression_level_label.setText(str(self.tr("compression_level")))
         self.image_size_label.setText(str(self.tr("image_size")))
         self.jpeg_quality_label.setText(str(self.tr("jpeg_quality")))
         self.pdf_level_label.setText(str(self.tr("pdf_level")))
         self.table.setHorizontalHeaderLabels(self.tr("headers"))
 
+        self._set_compression_level_items(selected_compression_level)
         self._set_image_dimension_items(selected_dimension)
         self._set_jpeg_quality_items(selected_quality)
         self._set_pdf_preset_items(selected_pdf_preset)
@@ -473,6 +565,7 @@ class MainWindow(QMainWindow):
         self.summary_label.setText(
             str(self.tr("summary")).format(
                 completed=summary.completed,
+                not_needed=summary.not_needed,
                 skipped=summary.skipped,
                 failed=summary.failed,
                 saved=summary.savings_size_text,

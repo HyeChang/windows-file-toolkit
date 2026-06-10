@@ -10,8 +10,9 @@ The main window is split into tabs:
 - `파일 이름 변경` / `Rename`: rename many files with preview-first rules.
 - `파일 자동 분류` / `Classify`: move files into category folders.
 - `파일 날짜 변경` / `Dates`: change file creation and modified dates.
+- `이미지 회전` / `Image Rotate`: rotate images as real files, using lossless JPEG rotation only when available.
 - `PDF 도구` / `PDF Tools`: merge, split, extract, delete, rotate, and reorder PDF pages.
-- `파일 내용 검색` / `Search`: search inside text, PDF, DOCX, XLSX, and OCR-capable files.
+- `파일 내용 검색` / `Search`: search inside text, PDF, DOCX, XLSX, HWPX, HWP, and OCR-capable files.
 
 ## Run from Source
 
@@ -28,6 +29,29 @@ powershell -ExecutionPolicy Bypass -File scripts/build_exe.ps1
 ```
 
 The executable is written to `dist/FileCompressor.exe`.
+
+## Build OCR Bundle
+
+The app can use a local Tesseract runtime placed next to the executable. It checks `tools/tesseract/tesseract.exe` before looking for a system Tesseract installation.
+
+```powershell
+$env:PYTHON = "C:\Path\To\python.exe"
+powershell -ExecutionPolicy Bypass -File scripts/package_ocr_bundle.ps1 -TesseractRoot "C:\Program Files\Tesseract-OCR"
+```
+
+The OCR bundle is written to `dist/FileCompressor-OCR.zip` with this structure:
+
+```text
+FileCompressor.exe
+tools/
+  tesseract/
+    tesseract.exe
+    tessdata/
+      kor.traineddata
+      eng.traineddata
+```
+
+The bundle script requires `kor.traineddata` and `eng.traineddata`. Include the relevant Tesseract and traineddata license notices when distributing the OCR bundle.
 
 ## Folder Batches
 
@@ -82,6 +106,20 @@ Use the `파일 날짜 변경` / `Dates` tab to change file timestamps after pre
 
 Creation-date changes use the Windows file time API. On non-Windows systems, creation-date changes are reported as unsupported instead of being silently ignored.
 
+## Image Rotation
+
+Use the `이미지 회전` / `Image Rotate` tab to add image files or folders, choose a rotation, preview output paths, and write rotated copies.
+
+- PNG and BMP files are physically rotated and saved without lossy recompression.
+- JPEG and JPG files are rotated through `jpegtran -perfect -copy all` so metadata is preserved and imperfect lossless rotations are skipped.
+- `jpegtran` is bundled into the normal one-file executable when `tools/jpegtran/jpegtran.exe` and `tools/jpegtran/jpeg62.dll` are present during the build.
+- If `jpegtran` is not bundled or otherwise available, JPEG and JPG rows are marked `건너뜀` / `Skipped`; the app does not recompress them as a fallback.
+- Turn on `손실 회전 허용` / `Allow lossy rotation` to rotate JPEG files by re-encoding when lossless rotation is impossible.
+- Rotated files are written next to the source with `_rotated` in the file name unless an output folder is selected.
+- Existing files are not overwritten; name collisions are resolved with `_2`, `_3`, and so on.
+
+For portable JPEG rotation, the app checks the one-file executable's extracted runtime first, then `tools/jpegtran/jpegtran.exe` next to the executable, then `jpegtran` on PATH. The bundled binary is from libjpeg-turbo; keep `tools/jpegtran/LICENSE-libjpeg-turbo.md` with distribution materials.
+
 ## PDF Tools
 
 Use the `PDF 도구` / `PDF Tools` tab to manage PDF pages without installing another PDF program.
@@ -101,9 +139,11 @@ PDF outputs are written to the selected output file or folder. Existing files ar
 
 Use the `파일 내용 검색` / `Search` tab to search inside files, not only file names.
 
-- Supported without OCR: `.txt`, `.csv`, `.md`, text-based `.pdf`, `.docx`, `.xlsx`, `.xlsm`.
+- Supported without OCR: `.txt`, `.csv`, `.md`, text-based `.pdf`, `.docx`, `.xlsx`, `.xlsm`, `.hwpx`, `.hwp`.
+- `.hwp` content search reads HWP 5 body text directly first, then falls back to Hancom automation when needed.
+- Search progress is shown while files are being scanned, with each active row showing a busy indicator.
 - Search results show file name, type, location, snippet, and status.
-- OCR is optional and uses Tesseract when installed.
+- OCR is optional and uses bundled `tools/tesseract/tesseract.exe` first, then system Tesseract when installed.
 - If OCR is missing, the tab shows `OCR: 설치 필요` / `OCR: install required` and provides an install button.
 
 The OCR install button opens the UB Mannheim Tesseract page: https://github.com/UB-Mannheim/tesseract/wiki
@@ -141,11 +181,12 @@ The app supports Korean and English. Korean is selected by default, and the lang
 
 ## Supported Formats
 
-- `.xlsx`, `.xlsm`, `.pptx`, `.pptm`: direct ZIP-package image optimization.
+- `.docx`, `.docm`, `.xlsx`, `.xlsm`, `.pptx`, `.pptm`: direct ZIP-package image optimization.
 - `.hwpx`: direct ZIP-package image optimization.
 - `.pdf`: Ghostscript required; use the in-app install button or Tools menu if it is missing.
 - `.hwp`: Hancom Office required; opened through Hancom automation and saved to the planned output path.
 - `.xls`: Microsoft Excel required; converted to `.xlsx`, then optimized.
 - `.ppt`: Microsoft PowerPoint required; converted to `.pptx`, then optimized.
+- Image rotation: `.png` and `.bmp` are supported directly; `.jpg` and `.jpeg` require `jpegtran` for lossless rotation.
 
 When required desktop applications are not installed, the affected file is skipped with a clear status message.
