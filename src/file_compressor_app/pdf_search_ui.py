@@ -90,6 +90,10 @@ TRANSLATIONS = {
         "search_options": "검색 옵션",
         "query": "검색어",
         "use_ocr": "OCR 사용",
+        "ocr_language": "OCR 언어",
+        "ocr_language_kor_eng": "한국어+영어",
+        "ocr_language_kor": "한국어",
+        "ocr_language_eng": "영어",
         "search_progress_idle": "검색 진행: 대기",
         "search_progress": "검색 진행: {done}/{total}",
         "current_search_file": "현재: {file}",
@@ -157,6 +161,10 @@ TRANSLATIONS = {
         "search_options": "Search options",
         "query": "Query",
         "use_ocr": "Use OCR",
+        "ocr_language": "OCR language",
+        "ocr_language_kor_eng": "Korean+English",
+        "ocr_language_kor": "Korean",
+        "ocr_language_eng": "English",
         "search_progress_idle": "Search progress: idle",
         "search_progress": "Search progress: {done}/{total}",
         "current_search_file": "Current: {file}",
@@ -788,12 +796,14 @@ class ContentSearchWorker(QObject):
         *,
         use_ocr: bool,
         tesseract_executable: str | None,
+        ocr_language: str,
     ):
         super().__init__()
         self.paths = list(paths)
         self.query = query
         self.use_ocr = use_ocr
         self.tesseract_executable = tesseract_executable
+        self.ocr_language = ocr_language
 
     @Slot()
     def run(self):
@@ -807,6 +817,7 @@ class ContentSearchWorker(QObject):
                 self.query,
                 use_ocr=self.use_ocr,
                 tesseract_executable=self.tesseract_executable,
+                ocr_language=self.ocr_language,
             )
             all_results.extend(results)
             self.result_ready.emit(index, results)
@@ -832,6 +843,8 @@ class ContentSearchWidget(QWidget):
         self.query_label = QLabel()
         self.query_edit = QLineEdit()
         self.use_ocr_checkbox = QCheckBox()
+        self.ocr_language_label = QLabel()
+        self.ocr_language_combo = QComboBox()
         self.ocr_status_label = QLabel()
         self.ocr_install_button = QPushButton()
         self.search_progress_bar = QProgressBar()
@@ -855,6 +868,8 @@ class ContentSearchWidget(QWidget):
         options.addWidget(self.query_label)
         options.addWidget(self.query_edit)
         options.addWidget(self.use_ocr_checkbox)
+        options.addWidget(self.ocr_language_label)
+        options.addWidget(self.ocr_language_combo)
         options.addWidget(self.ocr_status_label)
         options.addWidget(self.ocr_install_button)
         options.addStretch()
@@ -886,6 +901,8 @@ class ContentSearchWidget(QWidget):
         self.options_group.setTitle(str(self.tr("search_options")))
         self.query_label.setText(str(self.tr("query")))
         self.use_ocr_checkbox.setText(str(self.tr("use_ocr")))
+        self.ocr_language_label.setText(str(self.tr("ocr_language")))
+        self._set_ocr_language_items()
         self.ocr_install_button.setText(str(self.tr("install_ocr")))
         self.table.setHorizontalHeaderLabels(self.tr("search_headers"))
         if self.search_thread is None:
@@ -928,6 +945,7 @@ class ContentSearchWidget(QWidget):
         if not query or not self.paths:
             return
         executable = self.tesseract_status.executable if self.use_ocr_checkbox.isChecked() else None
+        ocr_language = self.ocr_language_combo.currentData() or "kor+eng"
         self.results = []
         self._prepare_search_table()
         self.search_progress_bar.setRange(0, len(self.paths))
@@ -943,6 +961,7 @@ class ContentSearchWidget(QWidget):
             query,
             use_ocr=self.use_ocr_checkbox.isChecked(),
             tesseract_executable=executable,
+            ocr_language=ocr_language,
         )
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
@@ -1033,6 +1052,7 @@ class ContentSearchWidget(QWidget):
         self.clear_list_button.setEnabled(not running)
         self.query_edit.setEnabled(not running)
         self.use_ocr_checkbox.setEnabled(not running)
+        self.ocr_language_combo.setEnabled(not running)
         self.search_button.setEnabled(not running)
         self.search_button.setText(str(self.tr("searching" if running else "search")))
 
@@ -1049,6 +1069,17 @@ class ContentSearchWidget(QWidget):
         else:
             self.ocr_status_label.setText(str(self.tr("ocr_missing")))
             self.ocr_install_button.setEnabled(True)
+
+    def _set_ocr_language_items(self):
+        selected = self.ocr_language_combo.currentData() or "kor+eng"
+        self.ocr_language_combo.blockSignals(True)
+        self.ocr_language_combo.clear()
+        self.ocr_language_combo.addItem(str(self.tr("ocr_language_kor_eng")), "kor+eng")
+        self.ocr_language_combo.addItem(str(self.tr("ocr_language_kor")), "kor")
+        self.ocr_language_combo.addItem(str(self.tr("ocr_language_eng")), "eng")
+        self.ocr_language_combo.blockSignals(False)
+        index = self.ocr_language_combo.findData(selected)
+        self.ocr_language_combo.setCurrentIndex(index if index >= 0 else 0)
 
 
 def _expand_pdf_files(paths: list[Path]) -> list[Path]:

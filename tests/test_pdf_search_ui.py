@@ -374,6 +374,42 @@ def test_search_tab_shows_failure_message_in_snippet_column(monkeypatch):
     assert window.search_tab.table.item(0, 4).text() == "실패"
 
 
+def test_search_tab_passes_selected_ocr_language(monkeypatch):
+    window = make_window(monkeypatch, tesseract_available=True)
+    workdir = case_dir("ui-search-ocr-language")
+    source = workdir / "scan.png"
+    source.write_bytes(b"fake image")
+    calls = []
+
+    def fake_search_file(path, query, **kwargs):
+        calls.append((path, query, kwargs))
+        return [
+            SearchResult(
+                source=path,
+                kind="OCR",
+                location="OCR",
+                snippet="needle from ocr",
+                status="matched",
+            )
+        ]
+
+    monkeypatch.setattr("file_compressor_app.pdf_search_ui.search_file", fake_search_file)
+
+    window.search_tab.add_paths([source])
+    window.search_tab.query_edit.setText("needle")
+    window.search_tab.use_ocr_checkbox.setChecked(True)
+    window.search_tab.ocr_language_combo.setCurrentIndex(
+        window.search_tab.ocr_language_combo.findData("eng")
+    )
+    window.search_tab.run_search()
+    wait_until(lambda: window.search_tab.search_thread is None)
+
+    assert window.search_tab.ocr_language_label.text() == "OCR 언어"
+    assert calls[0][2]["use_ocr"] is True
+    assert calls[0][2]["tesseract_executable"] == "tesseract"
+    assert calls[0][2]["ocr_language"] == "eng"
+
+
 def test_search_tab_shows_ocr_status_and_opens_install_page(monkeypatch):
     window = make_window(monkeypatch, tesseract_available=False)
     opened = []

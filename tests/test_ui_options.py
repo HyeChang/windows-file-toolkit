@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
 from file_compressor.dependencies import DependencyStatus
@@ -111,6 +112,10 @@ def item_text_for_data(combo, data):
     return combo.itemText(combo.findData(data))
 
 
+def language_action_texts(window: MainWindow) -> list[str]:
+    return [action.text() for action in window.settings_menu.actions()]
+
+
 def test_window_defaults_to_korean_language(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     monkeypatch.setattr(
@@ -142,6 +147,14 @@ def test_window_defaults_to_korean_language(monkeypatch):
     assert window.pdf_level_label.text() == "PDF 수준"
     assert window.ghostscript_install_action.text() == "Ghostscript 설치"
     assert window.menuBar().actions() == []
+    assert window.settings_menu_button.text() == "설정"
+    assert window.tabs.cornerWidget(Qt.Corner.TopLeftCorner) is window.settings_menu_button
+    assert "subcontrol-position: center right" in window.settings_menu_button.styleSheet()
+    assert language_action_texts(window) == ["한국어", "English"]
+    assert window.korean_language_action.isChecked() is True
+    assert window.english_language_action.isChecked() is False
+    assert window.language_label.isHidden() is True
+    assert window.language_combo.isHidden() is True
     assert window.pdf_tool_status_label.text() == "PDF 압축 도구: 설치 필요"
     assert window.ghostscript_install_button.text() == "설치"
     assert window.ghostscript_install_button.isEnabled() is True
@@ -190,6 +203,10 @@ def test_window_switches_visible_text_to_english(monkeypatch):
     assert window.pdf_level_label.text() == "PDF level"
     assert window.ghostscript_install_action.text() == "Install Ghostscript"
     assert window.menuBar().actions() == []
+    assert window.settings_menu_button.text() == "Settings"
+    assert language_action_texts(window) == ["한국어", "English"]
+    assert window.korean_language_action.isChecked() is False
+    assert window.english_language_action.isChecked() is True
     assert window.pdf_tool_status_label.text() == "PDF compression tool: install required"
     assert window.ghostscript_install_button.text() == "Install"
     assert window.cancel_button.text() == "Cancel"
@@ -202,6 +219,28 @@ def test_window_switches_visible_text_to_english(monkeypatch):
     assert item_text_for_data(window.compression_level_combo, "maximum") == "Maximum"
     assert item_text_for_data(window.pdf_preset_combo, "screen") == "Screen"
     assert window.status_label.text() == "Add files to start."
+
+
+def test_window_settings_menu_changes_program_language(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    app()
+    window = MainWindow()
+
+    window.english_language_action.trigger()
+
+    assert window.language_combo.currentData() == "en"
+    assert window.windowTitle() == "File Compressor"
+    assert window.settings_menu_button.text() == "Settings"
+    assert window.korean_language_action.isChecked() is False
+    assert window.english_language_action.isChecked() is True
+
+    window.korean_language_action.trigger()
+
+    assert window.language_combo.currentData() == "ko"
+    assert window.windowTitle() == "파일 압축기"
+    assert window.settings_menu_button.text() == "설정"
+    assert window.korean_language_action.isChecked() is True
+    assert window.english_language_action.isChecked() is False
 
 
 def test_status_column_is_localized(monkeypatch):

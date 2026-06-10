@@ -313,6 +313,35 @@ def test_run_tesseract_ocr_uses_runner_and_search_can_use_ocr_fallback():
     assert results[0].location == "OCR"
 
 
+def test_search_files_passes_selected_ocr_language_to_tesseract():
+    workdir = case_dir("content-ocr-language")
+    image = workdir / "scan.png"
+    image.write_bytes(b"fake image")
+    calls = []
+
+    def fake_runner(command, **kwargs):
+        calls.append(command)
+
+        class Result:
+            stdout = "needle from ocr"
+            stderr = ""
+            returncode = 0
+
+        return Result()
+
+    results = search_files(
+        [image],
+        "needle",
+        use_ocr=True,
+        tesseract_executable="tesseract",
+        ocr_language="eng",
+        ocr_runner=fake_runner,
+    )
+
+    assert calls == [["tesseract", str(image), "stdout", "-l", "eng"]]
+    assert results[0].status == "matched"
+
+
 def test_pdf_ocr_renders_pages_before_running_tesseract():
     workdir = case_dir("content-pdf-ocr-render")
     pdf = workdir / "scan.pdf"
@@ -347,13 +376,14 @@ def test_pdf_ocr_renders_pages_before_running_tesseract():
         "needle",
         use_ocr=True,
         tesseract_executable="tesseract",
+        ocr_language="eng",
         ocr_runner=fake_runner,
         pdf_page_renderer=fake_renderer,
     )
 
     assert calls == [
-        ["tesseract", str(rendered_paths[0]), "stdout", "-l", "kor+eng"],
-        ["tesseract", str(rendered_paths[1]), "stdout", "-l", "kor+eng"],
+        ["tesseract", str(rendered_paths[0]), "stdout", "-l", "eng"],
+        ["tesseract", str(rendered_paths[1]), "stdout", "-l", "eng"],
     ]
     assert results == [
         SearchResult(

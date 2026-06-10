@@ -11,11 +11,13 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QMenu,
     QProgressBar,
     QPushButton,
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -76,6 +78,9 @@ TRANSLATIONS = {
         "diagnostic_powerpoint": "PowerPoint(.ppt): {status}",
         "diagnostic_hwp": "한글(.hwp): {status}",
         "tools": "도구",
+        "settings_menu": "설정",
+        "language_korean": "한국어",
+        "language_english": "English",
         "install_ghostscript": "Ghostscript 설치",
         "pdf_tool_available": "PDF 압축 도구: 사용 가능",
         "pdf_tool_missing": "PDF 압축 도구: 설치 필요",
@@ -142,6 +147,9 @@ TRANSLATIONS = {
         "diagnostic_powerpoint": "PowerPoint(.ppt): {status}",
         "diagnostic_hwp": "Hangul(.hwp): {status}",
         "tools": "Tools",
+        "settings_menu": "Settings",
+        "language_korean": "한국어",
+        "language_english": "English",
         "install_ghostscript": "Install Ghostscript",
         "pdf_tool_available": "PDF compression tool: available",
         "pdf_tool_missing": "PDF compression tool: install required",
@@ -298,6 +306,8 @@ class MainWindow(QMainWindow):
         settings_layout = QHBoxLayout()
         settings_layout.addWidget(self.language_label)
         settings_layout.addWidget(self.language_combo)
+        self.language_label.setHidden(True)
+        self.language_combo.setHidden(True)
         settings_layout.addWidget(self.compression_level_label)
         settings_layout.addWidget(self.compression_level_combo)
         settings_layout.addWidget(self.image_size_label)
@@ -352,6 +362,7 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.image_ratio_tab, "")
         self.tabs.addTab(self.pdf_tools_tab, "")
         self.tabs.addTab(self.search_tab, "")
+        self.tabs.setCornerWidget(self.settings_menu_button, Qt.Corner.TopLeftCorner)
         self.setCentralWidget(self.tabs)
         self.apply_language()
 
@@ -397,6 +408,39 @@ class MainWindow(QMainWindow):
         self._set_pdf_preset_items("screen")
 
     def _setup_menu(self):
+        self.settings_menu = QMenu(self)
+        self.settings_menu_button = QToolButton()
+        self.settings_menu_button.setAutoRaise(True)
+        self.settings_menu_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.settings_menu_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.settings_menu_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        self.settings_menu_button.setMenu(self.settings_menu)
+        self.settings_menu_button.setStyleSheet(
+            """
+            QToolButton {
+                border: none;
+                padding: 2px 18px 2px 8px;
+                margin: 0px 4px 0px 0px;
+                background: transparent;
+            }
+            QToolButton::menu-indicator {
+                subcontrol-origin: padding;
+                subcontrol-position: center right;
+                right: 6px;
+                width: 8px;
+            }
+            """
+        )
+
+        self.korean_language_action = QAction(self)
+        self.korean_language_action.setCheckable(True)
+        self.korean_language_action.triggered.connect(lambda _checked=False: self.set_app_language("ko"))
+        self.english_language_action = QAction(self)
+        self.english_language_action.setCheckable(True)
+        self.english_language_action.triggered.connect(lambda _checked=False: self.set_app_language("en"))
+        self.settings_menu.addAction(self.korean_language_action)
+        self.settings_menu.addAction(self.english_language_action)
+
         self.ghostscript_install_action = QAction(self)
         self.ghostscript_install_action.triggered.connect(self.open_ghostscript_download)
 
@@ -438,8 +482,22 @@ class MainWindow(QMainWindow):
         self.pdf_preset_combo.setCurrentIndex(self.pdf_preset_combo.findData(selected))
 
     def change_language(self):
-        self.language = self.language_combo.currentData()
+        self.set_app_language(self.language_combo.currentData())
+
+    def set_app_language(self, language):
+        if language not in TRANSLATIONS:
+            return
+        self.language = language
+        index = self.language_combo.findData(language)
+        if index >= 0 and self.language_combo.currentIndex() != index:
+            self.language_combo.blockSignals(True)
+            self.language_combo.setCurrentIndex(index)
+            self.language_combo.blockSignals(False)
         self.apply_language()
+
+    def _refresh_language_menu_state(self):
+        self.korean_language_action.setChecked(self.language == "ko")
+        self.english_language_action.setChecked(self.language == "en")
 
     def apply_compression_level_preset(self):
         options = COMPRESSION_LEVEL_PRESETS.get(self.compression_level_combo.currentData())
@@ -481,6 +539,10 @@ class MainWindow(QMainWindow):
         self.clear_list_button.setText(str(self.tr("clear_list")))
         self.start_button.setText(str(self.tr("start_compression")))
         self.cancel_button.setText(str(self.tr("cancel")))
+        self.settings_menu_button.setText(str(self.tr("settings_menu")))
+        self.korean_language_action.setText(str(self.tr("language_korean")))
+        self.english_language_action.setText(str(self.tr("language_english")))
+        self._refresh_language_menu_state()
         self.ghostscript_install_action.setText(str(self.tr("install_ghostscript")))
         self.settings_group.setTitle(str(self.tr("settings")))
         self.diagnostics_group.setTitle(str(self.tr("diagnostics")))

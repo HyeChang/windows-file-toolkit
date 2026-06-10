@@ -111,6 +111,7 @@ def search_files(
     *,
     use_ocr: bool = False,
     tesseract_executable: str | None = None,
+    ocr_language: str = "kor+eng",
     ocr_runner=subprocess.run,
     pdf_page_renderer: PdfPageRenderer | None = None,
     hwp_automation_available: Callable[[], bool] = default_hancom_available,
@@ -126,6 +127,7 @@ def search_files(
                 query,
                 use_ocr=use_ocr,
                 tesseract_executable=tesseract_executable,
+                ocr_language=ocr_language,
                 ocr_runner=ocr_runner,
                 pdf_page_renderer=pdf_page_renderer,
                 hwp_automation_available=hwp_automation_available,
@@ -143,6 +145,7 @@ def search_file(
     *,
     use_ocr: bool = False,
     tesseract_executable: str | None = None,
+    ocr_language: str = "kor+eng",
     ocr_runner=subprocess.run,
     pdf_page_renderer: PdfPageRenderer | None = None,
     hwp_automation_available: Callable[[], bool] = default_hancom_available,
@@ -162,7 +165,7 @@ def search_file(
         )
     except ValueError:
         if use_ocr and path.suffix.lower() in IMAGE_SUFFIXES | PDF_SUFFIXES:
-            return _search_ocr(path, query_normalized, tesseract_executable, ocr_runner, pdf_page_renderer)
+            return _search_ocr(path, query_normalized, tesseract_executable, ocr_language, ocr_runner, pdf_page_renderer)
         return [
             SearchResult(
                 source=path,
@@ -203,7 +206,7 @@ def search_file(
     if matched:
         return matched
     if use_ocr and path.suffix.lower() in IMAGE_SUFFIXES | PDF_SUFFIXES:
-        return _search_ocr(path, query_normalized, tesseract_executable, ocr_runner, pdf_page_renderer)
+        return _search_ocr(path, query_normalized, tesseract_executable, ocr_language, ocr_runner, pdf_page_renderer)
     return [
         SearchResult(
             source=path,
@@ -642,6 +645,7 @@ def _search_ocr(
     path: Path,
     query_normalized: str,
     executable: str | None,
+    language: str,
     runner,
     pdf_page_renderer: PdfPageRenderer | None = None,
 ) -> list[SearchResult]:
@@ -661,6 +665,7 @@ def _search_ocr(
             sections = run_pdf_tesseract_ocr(
                 path,
                 executable=executable,
+                language=language,
                 runner=runner,
                 page_renderer=pdf_page_renderer,
             )
@@ -669,7 +674,7 @@ def _search_ocr(
                 TextSection(
                     kind="OCR",
                     location="OCR",
-                    text=run_tesseract_ocr(path, executable=executable, runner=runner),
+                    text=run_tesseract_ocr(path, executable=executable, language=language, runner=runner),
                 )
             ]
     except OSError as exc:
